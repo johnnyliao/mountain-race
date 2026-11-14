@@ -32,6 +32,7 @@ button:focus-visible{outline:3px solid var(--papaya);outline-offset:3px}
 #speed{position:absolute;left:calc(14px + env(safe-area-inset-left,0px));top:calc(10px + env(safe-area-inset-top,0px));padding:4px 14px 2px;display:flex;align-items:baseline;gap:6px}
 #speed b{font-family:var(--f-display);font-size:44px;line-height:1;font-variant-numeric:tabular-nums;min-width:3ch;text-align:right}
 #speed span{font-family:var(--f-display);font-size:15px}
+#speed.boost{background:#ffd43b}
 #info{position:absolute;left:calc(14px + env(safe-area-inset-left,0px));top:calc(78px + env(safe-area-inset-top,0px));display:flex;gap:8px}
 #info div{padding:2px 12px;font-family:var(--f-display);font-size:18px}
 #rank.first{background:#ffd43b}
@@ -556,10 +557,14 @@ if (THREE.GLTFLoader) {
 
 /* ---------------- traffic (same on both phones: position = start time x speed) ---------------- */
 const TRAFFIC_DEF = [
-  { color: 0xe63946, s0: 0.20, kmh: 70, lane: 4.6 },
-  { color: 0xf1f1f1, s0: 0.42, kmh: 85, lane: -4.6 },
-  { color: 0x2a9d8f, s0: 0.63, kmh: 65, lane: 4.6 },
-  { color: 0xf4a261, s0: 0.84, kmh: 90, lane: -4.6 },
+  { color: 0xe63946, s0: 0.06, kmh: 70, lane: 4.6 },
+  { color: 0xf1f1f1, s0: 0.19, kmh: 85, lane: -4.6 },
+  { color: 0x2a9d8f, s0: 0.31, kmh: 70, lane: 4.6 },
+  { color: 0xf4a261, s0: 0.44, kmh: 85, lane: -4.6 },
+  { color: 0x8e7dbe, s0: 0.56, kmh: 70, lane: 4.6 },
+  { color: 0xffd166, s0: 0.69, kmh: 85, lane: -4.6 },
+  { color: 0x457b9d, s0: 0.81, kmh: 70, lane: 4.6 },
+  { color: 0x6a994e, s0: 0.94, kmh: 85, lane: -4.6 },
 ];
 const TR_SCALE = 1.8, TR_HALF_L = 2.15 * TR_SCALE, TR_HALF_W = 1.0 * TR_SCALE;
 function makeTrafficCar(color) {
@@ -617,6 +622,36 @@ function bumpSound() {
   if (!A.ctx) return; const ctx = A.ctx, t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain();
   o.type = 'sine'; o.frequency.setValueAtTime(130, t); o.frequency.exponentialRampToValueAtTime(40, t + 0.2);
   o.connect(g); g.connect(A.master); g.gain.setValueAtTime(0.7, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.25); o.start(t); o.stop(t + 0.3);
+}
+
+/* ---------------- speed boost items (2 spots per lap, one per lane; position is fixed on the track) ---------------- */
+const BOOST_V = 200 / 3.6, BOOST_LANES = [4.6, -4.6];
+let boostUntil = 0;
+const BOOST_EATS = [0, 0, 0, 0];
+const BOOSTS = [];
+for (const f of [0.25, 0.75]) for (const lane of BOOST_LANES) {
+  const a = trackAt(f * TRACK_LEN), root = new THREE.Group();
+  const gem = new THREE.Mesh(new THREE.OctahedronGeometry(1.4), M(0xffaa00, { emissive: 0xffaa00 }));
+  const ring = new THREE.Mesh(new THREE.RingGeometry(2.2, 3.0, 28), new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.7, depthWrite: false }));
+  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.1; gem.position.y = 1.6;
+  root.add(gem, ring); root.position.set(a.x + L[a.i].x * lane, a.y, a.z + L[a.i].z * lane); scene.add(root);
+  BOOSTS.push({ x: root.position.x, z: root.position.z, y: a.y + 1.6, root, gem, hideUntil: 0 });
+}
+function updateBoosts(t, dt) {
+  const now = performance.now(), racing = G.phase === 'race';
+  for (const [k, b] of BOOSTS.entries()) {
+    b.root.visible = now >= b.hideUntil;
+    if (!b.root.visible) continue;
+    b.gem.rotation.y += dt * 2; b.gem.position.y = 1.6 + Math.sin(t * 2.5) * 0.25;
+    if (racing && Math.hypot(me.x - b.x, me.z - b.z) < 4 && Math.abs(me.y - b.y) < 4) {
+      b.hideUntil = now + 5000; boostUntil = now + 3000; BOOST_EATS[k]++; sendPresence(true); boostSound(); showToast('加速！', 1200);
+    }
+  }
+}
+function boostSound() {
+  if (!A.ctx) return; const ctx = A.ctx, t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain();
+  o.type = 'triangle'; o.frequency.setValueAtTime(400, t); o.frequency.exponentialRampToValueAtTime(1200, t + 0.4);
+  o.connect(g); g.connect(A.master); g.gain.setValueAtTime(0.3, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.45); o.start(t); o.stop(t + 0.5);
 }
 
 /* ---------------- audio ---------------- */
@@ -778,7 +813,7 @@ function connectAll() {
     c.on('message', onMsg); c.on('error', () => {});
     return c;
   });
-  NET.timers.push(setTimeout(() => { if (NET.state === 'opening') netFail('連不上連線伺服器，請確認網路後再試一次'); }, 12000));
+  NET.timers.push(setTimeout(() => { if (NET.state === 'opening') netFail('連不上連線伺服器，請確認網路後再試一次'); }, 20000));
   NET.timers.push(setInterval(() => {
     if (NET.partner && performance.now() - NET.lastRecv > 8000) dropPartner();
     if (NET.role === 'guest' && !NET.partner && NET.state === 'joining') pub({ t: 'hello' });
@@ -812,7 +847,7 @@ function sendPresence(force) {
   if (!force && now - lastSentT < 90) return;
   const st = G.phase === 'race' || G.phase === 'done' || G.phase === 'count'
     ? [+me.x.toFixed(2), +me.y.toFixed(2), +me.z.toFixed(2), +me.h.toFixed(3), +me.v.toFixed(2), +me.pitch.toFixed(3), +input.steer.toFixed(2)] : null;
-  const o = { pick: G.pick, ready: G.ready, phase: G.phase, st, lap: G.lap, idx: me.idx, horn: G.hornN, fin: G.fin };
+  const o = { pick: G.pick, ready: G.ready, phase: G.phase, st, lap: G.lap, idx: me.idx, horn: G.hornN, fin: G.fin, bx: BOOST_EATS.slice() };
   const s = JSON.stringify(o);
   if (!force && s === lastSent && now - lastSentT < 1000) return;
   lastSent = s; lastSentT = now;
@@ -838,7 +873,7 @@ for (const t of ['f1', 'bug']) cards[t].addEventListener('click', () => {
 $('readyBtn').addEventListener('click', () => { initAudio(); if (!G.pick) return; G.ready = !G.ready; sendPresence(true); updateLobby(); });
 $('soloBtn').addEventListener('click', () => { initAudio(); if (!G.pick) return; G.ready = true; startCountdown(true); });
 $('againBtn').addEventListener('click', () => {
-  G.phase = 'lobby'; G.ready = false; G.fin = null; G.lap = 0; G.solo = false;
+  G.phase = 'lobby'; G.ready = false; G.fin = null; G.lap = 0; G.solo = false; boostUntil = 0;
   $('result').hidden = true; $('lobby').hidden = false; $('hud').hidden = true; $('controls').hidden = true;
   parkAll(); sendPresence(true); updateLobby();
 });
@@ -875,7 +910,7 @@ function updateLobby() {
 }
 
 function startCountdown(solo) {
-  G.solo = solo; G.phase = 'count'; G.countAt = performance.now(); G.lastCount = -1; G.lap = 0; G.fin = null;
+  G.solo = solo; G.phase = 'count'; G.countAt = performance.now(); G.lastCount = -1; G.lap = 0; G.fin = null; boostUntil = 0; BOOSTS.forEach(b => b.hideUntil = 0);
   const g = gridSpot(G.pick); Object.assign(me, { x: g.x, y: g.y, z: g.z, h: g.h, v: 0, idx: g.idx, pitch: 0 });
   $('lobby').hidden = true; $('hud').hidden = false; $('controls').hidden = false; $('result').hidden = true;
   $('rank').hidden = solo; camInit = true; resetStick();
@@ -898,6 +933,7 @@ function drawMap() {
   mctx.fillStyle = '#fff'; mctx.fillRect(mx(P[0].x) - 6, mz(P[0].z) - 3, 12, 6);
   const dot = (x, z, c, r) => { mctx.beginPath(); mctx.arc(mx(x), mz(z), r, 0, 7); mctx.fillStyle = c; mctx.fill(); mctx.lineWidth = 3; mctx.strokeStyle = '#0b2a5b'; mctx.stroke(); };
   TR.forEach(c => dot(c.x, c.z, '#c3cbd6', 6));
+  BOOSTS.forEach(b => { if (b.root.visible) dot(b.x, b.z, '#ffd43b', 6); });
   if (opp.seen && opp.car) dot(opp.x, opp.z, opp.car === 'f1' ? '#ff7a00' : '#1ea5ec', 8);
   dot(me.x, me.z, G.pick === 'f1' ? '#ff7a00' : '#1ea5ec', 11);
 }
@@ -911,9 +947,13 @@ function physics(dt) {
   const finished = G.phase === 'done';
   let gas = racing && input.gas, brake = racing && input.brake, steer = racing || finished ? input.steer : 0;
   if (finished) { gas = false; brake = me.v > 6; }
-  if (gas) me.v += 11 * (1 - 0.85 * me.v / VMAX) * dt; if (me.v > VMAX) me.v = VMAX;
-  else if (brake) { me.v -= (me.v > 0 ? 22 : 4) * dt; if (me.v < -5) me.v = -5; }
-  else { me.v -= Math.sign(me.v) * Math.min(Math.abs(me.v), 2.6 * dt); }
+  if (racing && performance.now() < boostUntil) me.v = Math.min(BOOST_V, me.v + 30 * dt);
+  else {
+    if (brake && !gas) { me.v -= (me.v > 0 ? 22 : 4) * dt; if (me.v < -5) me.v = -5; }
+    else if (me.v > VMAX) me.v = Math.max(VMAX, me.v - 15 * dt);
+    else if (gas) me.v = Math.min(VMAX, me.v + 11 * (1 - 0.85 * me.v / VMAX) * dt);
+    else { me.v -= Math.sign(me.v) * Math.min(Math.abs(me.v), 2.6 * dt); }
+  }
   const n = nearestIdx(me.x, me.z, me.idx, 18); const i = n.i;
   const ht = yawAt(i), off = angDiff(ht, me.h);
   const sp = Math.abs(me.v);
@@ -954,8 +994,14 @@ function physics(dt) {
   return { steer, gas, brake };
 }
 
+let oppBx = null;
 function readOpp(dt) {
   const o = getOpp(), p = o && o.presence;
+  if (!o || !p || p.phase === 'lobby' || G.phase === 'lobby') oppBx = null;
+  else if (Array.isArray(p.bx)) {
+    if (oppBx) p.bx.forEach((c, k) => { if (c > oppBx[k]) BOOSTS[k].hideUntil = performance.now() + 5000; });
+    oppBx = p.bx.slice();
+  }
   if (!p || !p.pick || !p.st || p.phase === 'lobby' || G.phase === 'lobby') {
     opp.seen = false;
   } else {
@@ -990,6 +1036,7 @@ function frame(now) {
     if (o && o.presence && G.pick && o.presence.pick === G.pick) { const mine = myPeerId(); if (mine && mine > o.peer) { G.pick = null; G.ready = false; sendPresence(true); updateLobby(); } }
     if (G.ready && o && o.presence && o.presence.ready && o.presence.pick && o.presence.pick !== G.pick && (o.presence.phase === 'lobby' || o.presence.phase === 'count')) startCountdown(false);
     updateTraffic(now / 1000, dt);
+    updateBoosts(now / 1000, dt);
     orbit += dt * 0.05;
     camera.position.set(CX + Math.cos(orbit) * 600, 230, CZ + Math.sin(orbit) * 600);
     camera.lookAt(CX, 10, CZ);
@@ -1007,6 +1054,7 @@ function frame(now) {
   }
 
   updateTraffic((now - G.countAt) / 1000, dt);
+  updateBoosts(now / 1000, dt);
   const ctl = physics(dt);
   updateEngineAudio(true, ctl.gas, ctl.brake);
 
@@ -1028,6 +1076,7 @@ function frame(now) {
 
   // HUD
   $('kmh').textContent = Math.round(Math.abs(me.v) * 3.6);
+  $('speed').classList.toggle('boost', performance.now() < boostUntil);
   $('lap').textContent = `第 ${clamp(G.lap, 1, LAPS)}/${LAPS} 圈`;
   if (!G.solo) {
     const rk = $('rank');
