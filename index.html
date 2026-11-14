@@ -175,7 +175,7 @@ h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:clamp(28px,6v
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 <script src="model-f1.js"></script>
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <script src="model-beetle.js"></script>
 <script>
 (() => {
@@ -554,6 +554,71 @@ if (THREE.GLTFLoader) {
   }
 }
 
+/* ---------------- traffic (same on both phones: position = start time x speed) ---------------- */
+const TRAFFIC_DEF = [
+  { color: 0xe63946, s0: 0.20, kmh: 70, lane: 4.6 },
+  { color: 0xf1f1f1, s0: 0.42, kmh: 85, lane: -4.6 },
+  { color: 0x2a9d8f, s0: 0.63, kmh: 65, lane: 4.6 },
+  { color: 0xf4a261, s0: 0.84, kmh: 90, lane: -4.6 },
+];
+const TR_SCALE = 1.8, TR_HALF_L = 2.15 * TR_SCALE, TR_HALF_W = 1.0 * TR_SCALE;
+function makeTrafficCar(color) {
+  const root = new THREE.Group(), C = M(color), Gl = M(0xbfe3f5);
+  root.add(box(2.0, 0.7, 4.3, C, 0, 0.75, 0), box(1.7, 0.6, 2.2, Gl, 0, 1.38, -0.25), box(1.74, 0.14, 2.0, C, 0, 1.74, -0.25));
+  root.add(box(2.04, 0.16, 4.34, M(0x333338), 0, 0.42, 0));
+  for (const s of [1, -1]) {
+    root.add(ball(0.17, M(0xffffdd, { emissive: 0x666644 }), s * 0.66, 0.86, 2.14));
+    root.add(box(0.38, 0.18, 0.08, M(0xff3333, { emissive: 0x551111 }), s * 0.7, 0.92, -2.16));
+  }
+  const wheels = [];
+  for (const sx of [1, -1]) for (const sz of [1.4, -1.4]) { const w = wheel(0.4, 0.3, sx * 0.95, 0.4, sz, 0xd0d0d0); root.add(w.steer); wheels.push(w); }
+  const sh = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 6), new THREE.MeshBasicMaterial({ map: SHADOW, transparent: true, depthWrite: false }));
+  sh.rotation.x = -Math.PI / 2; sh.position.y = 0.08; sh.scale.set(0.8, 0.85, 1); root.add(sh);
+  root.scale.setScalar(TR_SCALE); root.rotation.order = 'YXZ'; scene.add(root);
+  return { root, wheels };
+}
+const TR = TRAFFIC_DEF.map(d => Object.assign({ x: 0, y: 0, z: 0, h: 0, v: d.kmh / 3.6 }, d, makeTrafficCar(d.color)));
+function trackAt(s) {
+  s = ((s % TRACK_LEN) + TRACK_LEN) % TRACK_LEN;
+  let lo = 0, hi = N - 1;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (D[mid] <= s) lo = mid; else hi = mid - 1; }
+  const i = lo, j = (i + 1) % N, seg = (j === 0 ? TRACK_LEN : D[j]) - D[i], f = seg > 0 ? (s - D[i]) / seg : 0;
+  return { i, x: P[i].x + (P[j].x - P[i].x) * f, y: P[i].y + (P[j].y - P[i].y) * f, z: P[i].z + (P[j].z - P[i].z) * f,
+    h: yawAt(i) + angDiff(yawAt(j), yawAt(i)) * f, pitch: -Math.atan((P[j].y - P[i].y) / Math.max(0.01, seg)) };
+}
+function updateTraffic(t, dt) {
+  for (const c of TR) {
+    const a = trackAt(c.s0 * TRACK_LEN + c.v * t);
+    c.x = a.x + L[a.i].x * c.lane; c.z = a.z + L[a.i].z * c.lane; c.y = a.y; c.h = a.h;
+    c.root.position.set(c.x, c.y, c.z); c.root.rotation.set(a.pitch, a.h, 0);
+    c.wheels.forEach(w => { w.spin.rotation.x += c.v * dt / (w.r * TR_SCALE); });
+  }
+}
+let lastBump = 0;
+function hitTraffic() {
+  const myHalfW = CARS[G.pick].half, myHalfL = 4.2;
+  for (const c of TR) {
+    if (Math.abs(me.y - c.y) > 4) continue;
+    const dx = me.x - c.x, dz = me.z - c.z, fx = Math.sin(c.h), fz = Math.cos(c.h), lx = fz, lz = -fx;
+    const a = dx * fx + dz * fz, b = dx * lx + dz * lz;
+    const pa = TR_HALF_L + myHalfL - Math.abs(a), pb = TR_HALF_W + myHalfW - Math.abs(b);
+    if (pa <= 0 || pb <= 0) continue;
+    if (pa < pb) {
+      const sg = Math.sign(a) || 1; me.x += fx * pa * sg; me.z += fz * pa * sg;
+      if (sg < 0) me.v = Math.min(me.v, c.v * 0.7); else me.v = Math.max(me.v, c.v);
+    } else {
+      const sg = Math.sign(b) || 1; me.x += lx * pb * sg; me.z += lz * pb * sg; me.v *= 0.9;
+    }
+    const now = performance.now();
+    if (now - lastBump > 900) { lastBump = now; bumpSound(); showToast('碰！小心路上的車', 1000); }
+  }
+}
+function bumpSound() {
+  if (!A.ctx) return; const ctx = A.ctx, t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain();
+  o.type = 'sine'; o.frequency.setValueAtTime(130, t); o.frequency.exponentialRampToValueAtTime(40, t + 0.2);
+  o.connect(g); g.connect(A.master); g.gain.setValueAtTime(0.7, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.25); o.start(t); o.stop(t + 0.3);
+}
+
 /* ---------------- audio ---------------- */
 const A = { ctx: null, musicOn: true };
 function initAudio() {
@@ -660,83 +725,98 @@ function readInput() {
   input.brake = padBrake || keys['arrowdown'] || keys['s'];
 }
 
-/* ---------------- network (PeerJS, 4-digit code) ---------------- */
-const PREFIX = 'sunny-mtn-race-v1-';
-const NET = { peer: null, conn: null, role: null, code: null, opp: null, lastRecv: 0, state: 'idle', err: '' };
+/* ---------------- network (public MQTT relay, 4-digit code) ---------------- */
+const BROKERS = ['wss://broker.hivemq.com:8884/mqtt', 'wss://test.mosquitto.org:8081/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
+const TOPIC = 'sunny-mtn-race/v1/';
+const NET = { clients: [], role: null, code: null, me: Math.random().toString(36).slice(2, 10), partner: null, opp: null,
+  lastRecv: 0, state: 'idle', err: '', seq: 0, lastSeq: -1, timers: [] };
 function getOpp() {
-  if (!NET.conn || !NET.conn.open || !NET.opp || performance.now() - NET.lastRecv > 6000) return null;
+  if (!NET.partner || !NET.opp || performance.now() - NET.lastRecv > 6000) return null;
   return { peer: NET.role === 'host' ? 'b' : 'a', presence: NET.opp };
 }
 function myPeerId() { return NET.role === 'host' ? 'a' : NET.role === 'guest' ? 'b' : null; }
 function netFail(msg) { NET.state = 'error'; NET.err = msg; updateLobby(); }
 function netReset() {
-  try { NET.conn && NET.conn.close(); } catch (_) {}
-  try { NET.peer && NET.peer.destroy(); } catch (_) {}
-  Object.assign(NET, { peer: null, conn: null, role: null, code: null, opp: null, state: 'idle', err: '' });
+  if (NET.partner) pub({ t: 'bye' });
+  NET.timers.forEach(clearInterval); NET.timers.forEach(clearTimeout);
+  NET.clients.forEach(c => { try { c.end(true); } catch (_) {} });
+  Object.assign(NET, { clients: [], role: null, code: null, partner: null, opp: null, state: 'idle', err: '', lastSeq: -1, timers: [] });
 }
-function attach(conn) {
-  NET.conn = conn;
-  conn.on('open', () => { NET.state = 'connected'; NET.lastRecv = performance.now(); lastSent = ''; sendPresence(true); updateLobby(); });
-  conn.on('data', d => { if (d && typeof d === 'object') { NET.opp = d; NET.lastRecv = performance.now(); } });
-  conn.on('close', () => {
-    if (NET.conn !== conn) return;
-    NET.conn = null; NET.opp = null; NET.state = NET.role === 'host' ? 'hosting' : 'lost'; G.ready = false; updateLobby();
+function pub(msg) {
+  msg.from = NET.me; msg.r = NET.role; msg.seq = ++NET.seq;
+  const s = JSON.stringify(msg);
+  NET.clients.forEach(c => { if (c.connected) { try { c.publish(TOPIC + NET.code, s, { qos: 0 }); } catch (_) {} } });
+}
+function onMsg(topic, payload) {
+  let m; try { m = JSON.parse(payload.toString()); } catch (_) { return; }
+  if (!m || typeof m !== 'object' || m.from === NET.me || typeof m.seq !== 'number') return;
+  const want = NET.role === 'host' ? 'guest' : 'host';
+  if (m.r !== want) return;
+  if (NET.partner && m.from !== NET.partner) return;
+  if (!NET.partner) {
+    if (m.t !== 'hello') return;
+    NET.partner = m.from; NET.lastSeq = -1; NET.state = 'connected'; lastSent = '';
+    pub({ t: 'hello' }); updateLobby();
+  }
+  if (m.seq <= NET.lastSeq) return; // same message via the second broker, or out of order
+  NET.lastSeq = m.seq; NET.lastRecv = performance.now();
+  if (m.t === 'state' && m.d && typeof m.d === 'object') NET.opp = m.d;
+  if (m.t === 'bye') dropPartner();
+}
+function dropPartner() {
+  NET.partner = null; NET.opp = null; G.ready = false;
+  NET.state = NET.role === 'host' ? 'hosting' : 'lost'; updateLobby();
+}
+function connectAll() {
+  if (!window.mqtt) return false;
+  NET.clients = BROKERS.map(u => {
+    const c = mqtt.connect(u, { clean: true, connectTimeout: 8000, reconnectPeriod: 3000, keepalive: 30, clientId: 'smr_' + NET.me + '_' + Math.random().toString(36).slice(2, 6) });
+    c.on('connect', () => {
+      c.subscribe(TOPIC + NET.code, { qos: 0 });
+      if (NET.state === 'opening') { NET.state = NET.role === 'host' ? 'hosting' : 'joining'; updateLobby(); }
+    });
+    c.on('message', onMsg); c.on('error', () => {});
+    return c;
   });
-  conn.on('error', () => {});
+  NET.timers.push(setTimeout(() => { if (NET.state === 'opening') netFail('連不上連線伺服器，請確認網路後再試一次'); }, 12000));
+  NET.timers.push(setInterval(() => {
+    if (NET.partner && performance.now() - NET.lastRecv > 8000) dropPartner();
+    if (NET.role === 'guest' && !NET.partner && NET.state === 'joining') pub({ t: 'hello' });
+    if (NET.partner && performance.now() - lastSentT > 900) sendPresence(true);
+  }, 1000));
+  return true;
 }
 function hostRoom() {
   netReset();
-  if (!window.Peer) return netFail('連線元件載入失敗，請重新整理網頁');
-  const code = String(1000 + Math.floor(Math.random() * 9000));
-  NET.role = 'host'; NET.code = code; NET.state = 'opening';
-  const p = new Peer(PREFIX + code); NET.peer = p;
-  p.on('open', () => { if (NET.peer === p) { NET.state = 'hosting'; updateLobby(); } });
-  p.on('connection', c => {
-    if (NET.conn && NET.conn.open) { c.on('open', () => c.close()); return; }
-    attach(c);
-  });
-  p.on('error', e => {
-    if (NET.peer !== p) return;
-    if (e.type === 'unavailable-id') { hostRoom(); return; }
-    if (NET.state === 'connected') return;
-    netFail('開房間失敗，請再按一次「開房間」');
-  });
-  p.on('disconnected', () => { if (NET.peer === p && NET.state !== 'connected') { try { p.reconnect(); } catch (_) {} } });
+  NET.role = 'host'; NET.code = String(1000 + Math.floor(Math.random() * 9000)); NET.state = 'opening';
+  if (!connectAll()) return netFail('連線元件載入失敗，請重新整理網頁');
   updateLobby();
 }
 function joinRoom(code) {
   code = String(code || '').replace(/\D/g, '');
   if (code.length !== 4) return netFail('房號是 4 個數字，再輸入一次');
   netReset();
-  if (!window.Peer) return netFail('連線元件載入失敗，請重新整理網頁');
-  NET.role = 'guest'; NET.code = code; NET.state = 'joining';
-  const p = new Peer(); NET.peer = p;
-  p.on('open', () => {
-    if (NET.peer !== p) return;
-    attach(p.connect(PREFIX + code, { reliable: true }));
-    setTimeout(() => { if (NET.peer === p && NET.state === 'joining') netFail('連不上房號 ' + code + '，確認號碼或請對方重開房間'); }, 12000);
-  });
-  p.on('error', e => {
-    if (NET.peer !== p || NET.state === 'connected') return;
-    netFail(e.type === 'peer-unavailable' ? '找不到房號 ' + code + '，確認對方已經開好房間' : '連線失敗，請再試一次');
-  });
+  NET.role = 'guest'; NET.code = code; NET.state = 'opening';
+  if (!connectAll()) return netFail('連線元件載入失敗，請重新整理網頁');
+  NET.timers.push(setTimeout(() => { if (NET.role === 'guest' && !NET.partner && NET.code === code) netFail('找不到房號 ' + code + '，請確認號碼，而且對方畫面還開著'); }, 20000));
   updateLobby();
 }
 $('hostBtn').addEventListener('click', () => { initAudio(); hostRoom(); });
 $('joinBtn').addEventListener('click', () => { initAudio(); joinRoom($('codeIn').value); });
 $('codeIn').addEventListener('keydown', e => { if (e.key === 'Enter') joinRoom($('codeIn').value); });
+addEventListener('pagehide', () => { if (NET.partner) pub({ t: 'bye' }); });
 setInterval(() => updateLobby(), 300);
 let lastSent = '', lastSentT = 0;
 function sendPresence(force) {
-  if (!NET.conn || !NET.conn.open) return; const now = performance.now();
-  if (!force && now - lastSentT < 66) return;
+  if (!NET.partner) return; const now = performance.now();
+  if (!force && now - lastSentT < 90) return;
   const st = G.phase === 'race' || G.phase === 'done' || G.phase === 'count'
     ? [+me.x.toFixed(2), +me.y.toFixed(2), +me.z.toFixed(2), +me.h.toFixed(3), +me.v.toFixed(2), +me.pitch.toFixed(3), +input.steer.toFixed(2)] : null;
   const o = { pick: G.pick, ready: G.ready, phase: G.phase, st, lap: G.lap, idx: me.idx, horn: G.hornN, fin: G.fin };
   const s = JSON.stringify(o);
   if (!force && s === lastSent && now - lastSentT < 1000) return;
   lastSent = s; lastSentT = now;
-  try { NET.conn.send(o); } catch (_) {}
+  pub({ t: 'state', d: o });
 }
 
 /* ---------------- game state ---------------- */
@@ -777,7 +857,7 @@ function updateLobby() {
   let msg, codeLook = false;
   $('netRow').hidden = NET.state === 'connected' || NET.state === 'hosting' || NET.state === 'opening' || NET.state === 'joining';
   if (NET.state === 'idle') msg = '按「開房間」拿到房號，或輸入對方的房號';
-  else if (NET.state === 'opening') msg = '開房間中…';
+  else if (NET.state === 'opening') msg = NET.role === 'guest' ? '連線中…' : '開房間中…';
   else if (NET.state === 'hosting') { msg = '房號 ' + NET.code + '　請對方輸入這個號碼'; codeLook = true; }
   else if (NET.state === 'joining') msg = '連線中…';
   else if (NET.state === 'error') msg = NET.err;
@@ -817,6 +897,7 @@ function drawMap() {
   mctx.strokeStyle = '#0b2a5b'; mctx.lineWidth = 14; mctx.stroke(); mctx.strokeStyle = '#9aa7b8'; mctx.lineWidth = 8; mctx.stroke();
   mctx.fillStyle = '#fff'; mctx.fillRect(mx(P[0].x) - 6, mz(P[0].z) - 3, 12, 6);
   const dot = (x, z, c, r) => { mctx.beginPath(); mctx.arc(mx(x), mz(z), r, 0, 7); mctx.fillStyle = c; mctx.fill(); mctx.lineWidth = 3; mctx.strokeStyle = '#0b2a5b'; mctx.stroke(); };
+  TR.forEach(c => dot(c.x, c.z, '#c3cbd6', 6));
   if (opp.seen && opp.car) dot(opp.x, opp.z, opp.car === 'f1' ? '#ff7a00' : '#1ea5ec', 8);
   dot(me.x, me.z, G.pick === 'f1' ? '#ff7a00' : '#1ea5ec', 11);
 }
@@ -840,6 +921,7 @@ function physics(dt) {
   me.h -= steer * yawRate * dt;
   if (Math.abs(steer) < 0.15 && sp > 2 && Math.abs(off) < 1.0 && me.v > 0) me.h += off * 0.9 * dt; // gentle auto-steer
   me.x += Math.sin(me.h) * me.v * dt; me.z += Math.cos(me.h) * me.v * dt;
+  hitTraffic();
   // stay on the road
   const n2 = nearestIdx(me.x, me.z, i, 6), j = n2.i;
   const dx = me.x - P[j].x, dz = me.z - P[j].z;
@@ -907,6 +989,7 @@ function frame(now) {
     const o = getOpp();
     if (o && o.presence && G.pick && o.presence.pick === G.pick) { const mine = myPeerId(); if (mine && mine > o.peer) { G.pick = null; G.ready = false; sendPresence(true); updateLobby(); } }
     if (G.ready && o && o.presence && o.presence.ready && o.presence.pick && o.presence.pick !== G.pick && (o.presence.phase === 'lobby' || o.presence.phase === 'count')) startCountdown(false);
+    updateTraffic(now / 1000, dt);
     orbit += dt * 0.05;
     camera.position.set(CX + Math.cos(orbit) * 600, 230, CZ + Math.sin(orbit) * 600);
     camera.lookAt(CX, 10, CZ);
@@ -923,6 +1006,7 @@ function frame(now) {
     }
   }
 
+  updateTraffic((now - G.countAt) / 1000, dt);
   const ctl = physics(dt);
   updateEngineAudio(true, ctl.gas, ctl.brake);
 
