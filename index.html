@@ -43,6 +43,9 @@ button:focus-visible{outline:3px solid var(--papaya);outline-offset:3px}
 #count.pop{animation:pop .5s ease-out}
 @keyframes pop{from{transform:translate(-50%,-50%) scale(1.8);opacity:0}to{transform:translate(-50%,-50%) scale(1);opacity:1}}
 #toast{position:absolute;left:50%;top:calc(14px + env(safe-area-inset-top,0px));transform:translateX(-50%);padding:4px 14px;font-family:var(--f-display);font-size:17px}
+/* boost fx layers: above the 3D canvas, below HUD/controls */
+#fx{position:fixed;inset:0;width:100%;height:100%;pointer-events:none}
+#glow{position:fixed;inset:0;pointer-events:none;opacity:0;background:radial-gradient(ellipse at center,rgba(255,170,0,0) 38%,rgba(255,120,0,.85) 100%)}
 
 /* touch controls */
 #controls{position:fixed;inset:0;pointer-events:none}
@@ -79,6 +82,8 @@ h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:clamp(28px,6v
 .big{font-size:22px;padding:6px 26px;background:#4fd36a}
 .big:disabled{background:#cfd6df;color:#6b7a90;box-shadow:0 4px 0 #6b7a90;border-color:#6b7a90}
 .alt{font-size:16px;padding:6px 16px}
+.trk.sel{background:#ffd43b}
+#trackName{padding:2px 12px;font-family:var(--f-display);font-size:15px}
 #result .panel{gap:12px}
 #resTitle{font-size:clamp(32px,8vh,56px)}
 #resTimes{padding:8px 18px;font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;text-align:center;line-height:1.6}
@@ -99,6 +104,8 @@ h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:clamp(28px,6v
 </head>
 <body>
 <div id="game"></div>
+<canvas id="fx"></canvas>
+<div id="glow"></div>
 
 <div id="hud" hidden>
   <div id="speed" class="sticker"><b id="kmh">0</b><span>km/h</span></div>
@@ -126,6 +133,11 @@ h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:clamp(28px,6v
         <input id="codeIn" class="sticker" type="tel" inputmode="numeric" maxlength="4" placeholder="輸入房號" autocomplete="off">
         <button id="joinBtn" class="alt sticker" type="button">加入</button>
       </div>
+    </div>
+    <div class="row" id="trackRow">
+      <button id="trk-1" class="alt sticker trk" type="button">初級</button>
+      <button id="trk-2" class="alt sticker trk" type="button">中級</button>
+      <span id="trackName" class="sticker"></span>
     </div>
     <div class="cars">
       <button class="car sticker" id="pick-f1" type="button" data-car="f1">
@@ -182,9 +194,19 @@ h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:clamp(28px,6v
 (() => {
 'use strict';
 const $ = id => document.getElementById(id);
-const N = 700, HALF = 10, LAPS = 2, VMAX = 140 / 3.6, SC = 1.6;
-const CX = 10 * SC, CZ = 100 * SC, TW = 960 * SC;
-const LX = 10 * SC, LZ = 115 * SC;
+const TRACK_ID = new URLSearchParams(location.search).get('track') === '2' ? 2 : 1;
+const TRACKS = {
+  1: { label: '初級', name: '初級　晴天山路', ctrl: [[0,0,0],[120,4,-20],[220,10,30],[262,16,140],[205,22,232],[95,26,252],[25,24,192],[-40,18,228],[-140,14,262],[-232,10,182],[-242,6,60],[-172,2,-40],[-82,0,-62]],
+    N: 700, SC: 1.6, yScale: 1.3, CX: 10 * 1.6, CZ: 100 * 1.6, TW: 960 * 1.6, lake: { x: 10 * 1.6, z: 115 * 1.6 }, mountR: [300 * 1.6, 470 * 1.6],
+    vmaxKmh: 140, accelScale: 1, boostKmh: 200, boostAt: [0.25, 0.75], cars: 16, motos: 6, trafficKmh: { left: 70, right: 85 }, bgm: 'easy' },
+  2: { label: '中級', name: '中級　激情山路', ctrl: [[326.1,12.7,0],[343.8,15.6,84.8],[287.8,18.4,151],[212.8,20.8,188.5],[169.8,22.7,246.1],[121.9,24,321.3],[41.6,24.7,342.3],[-36.9,24.6,303.5],[-105,23.8,276.9],[-186.8,22.3,270.6],[-254.8,20.3,225.7],[-272.9,17.8,143.2],[-283.5,15,69.9],[-326.1,12,0],[-343.8,9.1,-84.8],[-287.8,6.3,-151],[-212.8,3.9,-188.5],[-169.8,2,-246.1],[-121.9,0.7,-321.3],[-41.6,0.1,-342.3],[36.9,0.1,-303.5],[105,0.9,-276.9],[186.8,2.4,-270.6],[254.8,4.4,-225.7],[272.9,6.9,-143.2],[283.5,9.7,-69.9]],
+    N: 1050, SC: 1.6, yScale: 1.3, CX: 0, CZ: 0, TW: 1936, lake: null, mountR: [680, 952],
+    vmaxKmh: 210, accelScale: 1.5, boostKmh: 300, boostAt: [0.2, 0.53, 0.86], cars: 32, motos: 12, trafficKmh: { left: 95, right: 115 }, bgm: 'medium' }
+};
+const TRACK = TRACKS[TRACK_ID];
+const N = TRACK.N, HALF = 10, LAPS = 2, VMAX = TRACK.vmaxKmh / 3.6, SC = TRACK.SC;
+const CX = TRACK.CX, CZ = TRACK.CZ, TW = TRACK.TW;
+const LX = TRACK.lake ? TRACK.lake.x : 0, LZ = TRACK.lake ? TRACK.lake.z : 0;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const ss = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 const angDiff = (a, b) => { let d = a - b; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return d; };
@@ -213,8 +235,8 @@ const sun = new THREE.DirectionalLight(0xfff0d0, 0.95); sun.position.set(300, 42
 const M = (c, o) => new THREE.MeshLambertMaterial(Object.assign({ color: c }, o || {}));
 
 /* ---------------- track ---------------- */
-const ctrl = [[0,0,0],[120,4,-20],[220,10,30],[262,16,140],[205,22,232],[95,26,252],[25,24,192],[-40,18,228],[-140,14,262],[-232,10,182],[-242,6,60],[-172,2,-40],[-82,0,-62]];
-const curve = new THREE.CatmullRomCurve3(ctrl.map(p => new THREE.Vector3(p[0] * SC, p[1] * 1.3, p[2] * SC)), true, 'centripetal');
+const ctrl = TRACK.ctrl;
+const curve = new THREE.CatmullRomCurve3(ctrl.map(p => new THREE.Vector3(p[0] * SC, p[1] * TRACK.yScale, p[2] * SC)), true, 'centripetal');
 const P = curve.getSpacedPoints(N).slice(0, N);
 const T = [], L = [], D = [0];
 for (let i = 0; i < N; i++) {
@@ -241,9 +263,9 @@ function noise(x, z) {
 function heightAt(x, z) {
   const n = nearestIdx(x, z);
   const y0 = P[n.i].y, t = ss(HALF + 3, HALF + 45, n.d);
-  const lake = 30 * Math.exp(-((x - LX) ** 2 + (z - LZ) ** 2) / (62 * SC * 62 * SC));
+  const lake = TRACK.lake ? 30 * Math.exp(-((x - LX) ** 2 + (z - LZ) ** 2) / (62 * SC * 62 * SC)) : 0;
   const r = Math.hypot(x - CX, z - CZ);
-  const mount = ss(300 * SC, 470 * SC, r) * 95;
+  const mount = ss(TRACK.mountR[0], TRACK.mountR[1], r) * 95;
   return { h: y0 - 0.35 + t * (noise(x, z) * 13 + 0.35 - lake + mount), d: n.d };
 }
 
@@ -334,8 +356,10 @@ let lakeLevel = null;
   const hs = new Float32Array(pos.count), ds = new Float32Array(pos.count);
   for (let k = 0; k < pos.count; k++) { const r = heightAt(pos.getX(k), pos.getZ(k)); hs[k] = r.h; ds[k] = r.d; pos.setY(k, r.h); }
   // lake level: just below the lowest rim around the bowl
-  let rim = 1e9; for (let a = 0; a < 48; a++) { const ang = a / 48 * Math.PI * 2; rim = Math.min(rim, heightAt(LX + Math.cos(ang) * 70 * SC, LZ + Math.sin(ang) * 70 * SC).h); }
-  const centre = heightAt(LX, LZ).h; if (rim - 1 > centre + 1.5) lakeLevel = rim - 1;
+  if (TRACK.lake) {
+    let rim = 1e9; for (let a = 0; a < 48; a++) { const ang = a / 48 * Math.PI * 2; rim = Math.min(rim, heightAt(LX + Math.cos(ang) * 70 * SC, LZ + Math.sin(ang) * 70 * SC).h); }
+    const centre = heightAt(LX, LZ).h; if (rim - 1 > centre + 1.5) lakeLevel = rim - 1;
+  }
   const c = new THREE.Color();
   for (let k = 0; k < pos.count; k++) {
     const x = pos.getX(k), z = pos.getZ(k), h = hs[k], d = ds[k];
@@ -556,28 +580,30 @@ if (THREE.GLTFLoader) {
 }
 
 /* ---------------- traffic (same on both phones: position = start time x speed) ---------------- */
-const TRAFFIC_DEF = [
-  { color: 0xe63946, s0: 0.06, kmh: 70, lane: 4.6 },
-  { color: 0xf1f1f1, s0: 0.19, kmh: 85, lane: -4.6 },
-  { color: 0x2a9d8f, s0: 0.31, kmh: 70, lane: 4.6 },
-  { color: 0xf4a261, s0: 0.44, kmh: 85, lane: -4.6 },
-  { color: 0x8e7dbe, s0: 0.56, kmh: 70, lane: 4.6 },
-  { color: 0xffd166, s0: 0.69, kmh: 85, lane: -4.6 },
-  { color: 0x457b9d, s0: 0.81, kmh: 70, lane: 4.6 },
-  { color: 0x6a994e, s0: 0.94, kmh: 85, lane: -4.6 },
-];
+const TR_COLORS = [0xe63946, 0xf1f1f1, 0x2a9d8f, 0xf4a261, 0x8e7dbe, 0xffd166, 0x457b9d, 0x6a994e, 0x9b5de5, 0x00bbf9, 0xf15bb5, 0x9ef01a];
+const TR_LANE_X = [4.6, -4.6], MO_LANE_X = [7.6, -7.6];
+// fixed pseudo-jitter (no Math.random) so both phones build the same layout; k = vehicle index
+const jitter = k => ((k * 37) % 11 - 5) / 11 * 0.6;
+// spread vehicles over [start+40 m, start-300 m] so none comes from behind the grid in the first ~10 s
+const trS0 = f => 40 / TRACK_LEN + f * (1 - 340 / TRACK_LEN);
+const TRAFFIC_DEF = Array.from({ length: TRACK.cars }, (_, k) => {
+  const perLane = Math.ceil(TRACK.cars / 2), left = k % 2 === 0;
+  return { color: TR_COLORS[k % TR_COLORS.length], s0: trS0(((k >> 1) + 0.5 + jitter(k)) / perLane), kmh: left ? TRACK.trafficKmh.left : TRACK.trafficKmh.right, lane: TR_LANE_X[k % 2] };
+});
 const TR_SCALE = 1.8, TR_HALF_L = 2.15 * TR_SCALE, TR_HALF_W = 1.0 * TR_SCALE;
+const TR_GLASS = M(0xbfe3f5), TR_UNDER = M(0x333338), TR_HEAD = M(0xffffdd, { emissive: 0x666644 }), TR_TAIL = M(0xff3333, { emissive: 0x551111 });
+const TR_SHADOW_GEO = new THREE.PlaneGeometry(3.2, 6), TR_SHADOW_MAT = new THREE.MeshBasicMaterial({ map: SHADOW, transparent: true, depthWrite: false });
 function makeTrafficCar(color) {
-  const root = new THREE.Group(), C = M(color), Gl = M(0xbfe3f5);
-  root.add(box(2.0, 0.7, 4.3, C, 0, 0.75, 0), box(1.7, 0.6, 2.2, Gl, 0, 1.38, -0.25), box(1.74, 0.14, 2.0, C, 0, 1.74, -0.25));
-  root.add(box(2.04, 0.16, 4.34, M(0x333338), 0, 0.42, 0));
+  const root = new THREE.Group(), C = M(color);
+  root.add(box(2.0, 0.7, 4.3, C, 0, 0.75, 0), box(1.7, 0.6, 2.2, TR_GLASS, 0, 1.38, -0.25), box(1.74, 0.14, 2.0, C, 0, 1.74, -0.25));
+  root.add(box(2.04, 0.16, 4.34, TR_UNDER, 0, 0.42, 0));
   for (const s of [1, -1]) {
-    root.add(ball(0.17, M(0xffffdd, { emissive: 0x666644 }), s * 0.66, 0.86, 2.14));
-    root.add(box(0.38, 0.18, 0.08, M(0xff3333, { emissive: 0x551111 }), s * 0.7, 0.92, -2.16));
+    root.add(ball(0.17, TR_HEAD, s * 0.66, 0.86, 2.14));
+    root.add(box(0.38, 0.18, 0.08, TR_TAIL, s * 0.7, 0.92, -2.16));
   }
   const wheels = [];
   for (const sx of [1, -1]) for (const sz of [1.4, -1.4]) { const w = wheel(0.4, 0.3, sx * 0.95, 0.4, sz, 0xd0d0d0); root.add(w.steer); wheels.push(w); }
-  const sh = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 6), new THREE.MeshBasicMaterial({ map: SHADOW, transparent: true, depthWrite: false }));
+  const sh = new THREE.Mesh(TR_SHADOW_GEO, TR_SHADOW_MAT);
   sh.rotation.x = -Math.PI / 2; sh.position.y = 0.08; sh.scale.set(0.8, 0.85, 1); root.add(sh);
   root.scale.setScalar(TR_SCALE); root.rotation.order = 'YXZ'; scene.add(root);
   return { root, wheels };
@@ -596,6 +622,7 @@ function updateTraffic(t, dt) {
     const a = trackAt(c.s0 * TRACK_LEN + c.v * t);
     c.x = a.x + L[a.i].x * c.lane; c.z = a.z + L[a.i].z * c.lane; c.y = a.y; c.h = a.h;
     c.root.position.set(c.x, c.y, c.z); c.root.rotation.set(a.pitch, a.h, 0);
+    c.root.visible = G.phase === 'lobby' || Math.hypot(c.x - me.x, c.z - me.z) < 450;
     c.wheels.forEach(w => { w.spin.rotation.x += c.v * dt / (w.r * TR_SCALE); });
   }
 }
@@ -603,7 +630,7 @@ let lastBump = 0;
 function hitTraffic() {
   const myHalfW = CARS[G.pick].half, myHalfL = 4.2;
   for (const c of TR) {
-    if (Math.abs(me.y - c.y) > 4) continue;
+    if (Math.abs(me.y - c.y) > 4 || Math.hypot(me.x - c.x, me.z - c.z) > 30) continue;
     const dx = me.x - c.x, dz = me.z - c.z, fx = Math.sin(c.h), fz = Math.cos(c.h), lx = fz, lz = -fx;
     const a = dx * fx + dz * fz, b = dx * lx + dz * lz;
     const pa = TR_HALF_L + myHalfL - Math.abs(a), pb = TR_HALF_W + myHalfW - Math.abs(b);
@@ -624,12 +651,90 @@ function bumpSound() {
   o.connect(g); g.connect(A.master); g.gain.setValueAtTime(0.7, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.25); o.start(t); o.stop(t + 0.3);
 }
 
+/* ---------------- motorcycles (same deterministic layout; a car hit sends them flying) ---------------- */
+const MO_SCALE = 1.8, MO_HALF_L = 1.1 * MO_SCALE, MO_HALF_W = 0.45 * MO_SCALE, MO_WHEEL_R = 0.36, MO_FLY_S = 1.6, MO_BACK_S = 4;
+const MO_PALS = [[0xff6b00, 0xffe066, 0x111111], [0x2b59c3, 0xff5d8f, 0xffffff], [0x13a06b, 0xffd60a, 0x222222], [0xd62828, 0x7ad3ff, 0x111111]];
+const MO_GEO = {
+  wheel: new THREE.CylinderGeometry(MO_WHEEL_R, MO_WHEEL_R, 0.14, 14), body: new THREE.BoxGeometry(0.22, 0.28, 1.2), tank: new THREE.BoxGeometry(0.36, 0.22, 0.6),
+  seat: new THREE.BoxGeometry(0.3, 0.1, 0.5), fork: new THREE.BoxGeometry(0.08, 0.75, 0.08), bar: new THREE.BoxGeometry(0.7, 0.07, 0.07),
+  torso: new THREE.BoxGeometry(0.36, 0.5, 0.3), arm: new THREE.BoxGeometry(0.1, 0.1, 0.5), helmet: new THREE.SphereGeometry(0.19, 12, 8),
+  shadow: new THREE.PlaneGeometry(1.2, 2.6)
+};
+const MO_MAT = { tire: M(0x1d1d22), dark: M(0x333338), seat: M(0x222228), shadow: new THREE.MeshBasicMaterial({ map: SHADOW, transparent: true, depthWrite: false }) };
+const MO_PAL_MATS = MO_PALS.map(([tank, rider, helmet]) => ({ tank: M(tank), rider: M(rider), helmet: M(helmet) }));
+function makeMoto(pal) {
+  const root = new THREE.Group(), pm = MO_PAL_MATS[pal], spins = [];
+  const put = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); root.add(m); return m; };
+  for (const z of [0.78, -0.72]) {
+    const spin = new THREE.Group(); spin.position.set(0, MO_WHEEL_R, z);
+    const tire = new THREE.Mesh(MO_GEO.wheel, MO_MAT.tire); tire.rotation.z = Math.PI / 2; spin.add(tire);
+    root.add(spin); spins.push(spin);
+  }
+  put(MO_GEO.body, MO_MAT.dark, 0, 0.55, 0); put(MO_GEO.tank, pm.tank, 0, 0.8, 0.2); put(MO_GEO.seat, MO_MAT.seat, 0, 0.9, -0.3);
+  put(MO_GEO.fork, MO_MAT.dark, 0, 0.55, 0.8); put(MO_GEO.bar, MO_MAT.seat, 0, 1.0, 0.72);
+  put(MO_GEO.torso, pm.rider, 0, 1.2, -0.12); put(MO_GEO.helmet, pm.helmet, 0, 1.5, -0.1);
+  for (const s of [1, -1]) put(MO_GEO.arm, pm.rider, s * 0.2, 1.1, 0.38);
+  const sh = put(MO_GEO.shadow, MO_MAT.shadow, 0, 0.08, 0); sh.rotation.x = -Math.PI / 2;
+  root.scale.setScalar(MO_SCALE); root.rotation.order = 'YXZ'; scene.add(root);
+  return { root, spins };
+}
+const MO = Array.from({ length: TRACK.motos }, (_, k) => {
+  const perLane = Math.ceil(TRACK.motos / 2), perCar = Math.ceil(TRACK.cars / 2), left = k % 2 === 0;
+  const kmh = (left ? TRACK.trafficKmh.left : TRACK.trafficKmh.right) - 15;
+  return Object.assign({ x: 0, y: 0, z: 0, h: 0, v: kmh / 3.6, s0: trS0(((k >> 1) + 0.5) / perLane + 0.5 / perCar), lane: MO_LANE_X[k % 2],
+    tumble: (k % 2 ? -1 : 1) * (5 + (k % 4) * 1.5), hitAt: null, away: false, gy: 0, vx: 0, vy: 0, vz: 0 }, makeMoto(k % MO_PALS.length));
+});
+function updateMotos(t, dt) {
+  const now = performance.now(), lobby = G.phase === 'lobby';
+  for (const m of MO) {
+    const el = m.hitAt === null ? Infinity : (now - m.hitAt) / 1000;
+    m.away = el >= MO_FLY_S && el < MO_BACK_S;
+    if (el < MO_FLY_S) { // flying: ballistic, tumbling
+      m.vy -= 25 * dt; m.x += m.vx * dt; m.y += m.vy * dt; m.z += m.vz * dt;
+      if (m.y < m.gy) { m.y = m.gy; m.vy = 0; const k = Math.max(0, 1 - 4 * dt); m.vx *= k; m.vz *= k; }
+      m.root.position.set(m.x, m.y, m.z); m.root.rotation.set(m.tumble * el, m.h, m.tumble * 0.6 * el); m.root.visible = true;
+      continue;
+    }
+    if (el < MO_BACK_S) { m.root.visible = false; continue; } // hidden after the flight
+    const a = trackAt(m.s0 * TRACK_LEN + m.v * t);
+    m.x = a.x + L[a.i].x * m.lane; m.z = a.z + L[a.i].z * m.lane; m.y = a.y; m.h = a.h;
+    m.root.position.set(m.x, m.y, m.z); m.root.rotation.set(a.pitch, a.h, 0);
+    m.root.visible = lobby || Math.hypot(m.x - me.x, m.z - me.z) < 450;
+    m.spins.forEach(s => { s.rotation.x += m.v * dt / (MO_WHEEL_R * MO_SCALE); });
+  }
+}
+function overlapMoto(m, x, y, z, hw) {
+  if (Math.hypot(x - m.x, z - m.z) > 30 || Math.abs(y - m.y) > 4) return false;
+  const dx = x - m.x, dz = z - m.z, fx = Math.sin(m.h), fz = Math.cos(m.h);
+  const a = dx * fx + dz * fz, b = dx * fz - dz * fx;
+  return MO_HALF_L + 4.2 - Math.abs(a) > 0 && MO_HALF_W + hw - Math.abs(b) > 0;
+}
+function hitMotos() {
+  for (const m of MO) {
+    if (m.hitAt !== null) continue;
+    if (overlapMoto(m, me.x, me.y, me.z, CARS[G.pick].half)) { flyMoto(m, me.x, me.y, me.z, me.h, me.v, true); continue; }
+    if (opp.seen && overlapMoto(m, opp.x, opp.y, opp.z, CARS[opp.car].half)) flyMoto(m, opp.x, opp.y, opp.z, opp.h, opp.v, false);
+  }
+}
+function flyMoto(m, x, y, z, h, v, isMe) {
+  const fx = Math.sin(h), fz = Math.cos(h), lx = fz, lz = -fx;
+  const side = Math.sign((m.x - x) * lx + (m.z - z) * lz) || 1;
+  const sp = Math.max(0, v) * 0.6 + 8;
+  m.vx = fx * sp + lx * side * 6; m.vz = fz * sp + lz * side * 6; m.vy = 14; m.gy = m.y; m.hitAt = performance.now();
+  if (isMe) { me.v *= 0.88; boingSound(); showToast('撞飛摩托車！', 1000); }
+}
+function boingSound() {
+  if (!A.ctx) return; const ctx = A.ctx, t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain();
+  o.type = 'sine'; o.frequency.setValueAtTime(180, t); o.frequency.exponentialRampToValueAtTime(900, t + 0.12); o.frequency.exponentialRampToValueAtTime(260, t + 0.3);
+  o.connect(g); g.connect(A.master); g.gain.setValueAtTime(0.5, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.35); o.start(t); o.stop(t + 0.4);
+}
+
 /* ---------------- speed boost items (2 spots per lap, one per lane; position is fixed on the track) ---------------- */
-const BOOST_V = 200 / 3.6, BOOST_LANES = [4.6, -4.6];
+const BOOST_V = TRACK.boostKmh / 3.6, BOOST_LANES = [4.6, -4.6];
 let boostUntil = 0;
-const BOOST_EATS = [0, 0, 0, 0];
+const BOOST_EATS = new Array(TRACK.boostAt.length * 2).fill(0);
 const BOOSTS = [];
-for (const f of [0.25, 0.75]) for (const lane of BOOST_LANES) {
+for (const f of TRACK.boostAt) for (const lane of BOOST_LANES) {
   const a = trackAt(f * TRACK_LEN), root = new THREE.Group();
   const gem = new THREE.Mesh(new THREE.OctahedronGeometry(1.4), M(0xffaa00, { emissive: 0xffaa00 }));
   const ring = new THREE.Mesh(new THREE.RingGeometry(2.2, 3.0, 28), new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.7, depthWrite: false }));
@@ -703,10 +808,26 @@ function playStep(k, t) {
   if (pos === 2 || pos === 6) noiseHit(t, 0.12, 'bandpass', 1800, 0.35);
   if (pos % 2 === 1) noiseHit(t, 0.04, 'highpass', 7000, 0.12);
 }
+// medium track BGM: 170 BPM, A minor, i-VI-III-VII (Am F C G), 8 bars of eighth notes, 16th hats
+const STEP2 = 60 / 170 / 2;
+const MEL2 = [81,0,79,76,72,0,76,79, 77,0,76,77,79,0,77,74, 72,0,76,79,84,0,79,76, 83,0,79,0,81,79,74,0,
+              81,0,79,76,72,0,76,79, 77,0,76,77,79,0,77,74, 72,0,76,79,84,0,86,84, 79,0,83,0,79,74,71,0];
+const ROOTS2 = [45, 41, 48, 43, 45, 41, 48, 43];
+const CH2 = { 45: [69, 72, 76], 41: [65, 69, 72], 48: [72, 76, 79], 43: [67, 71, 74] };
+function playStep2(k, t) {
+  const m = MEL2[k]; if (m) tone(mtof(m), t, STEP2 * 0.9, 'square', 0.14);
+  const bar = k >> 3, pos = k & 7, root = ROOTS2[bar];
+  tone(mtof(pos % 2 ? root + 12 : root), t, STEP2 * 0.8, 'sawtooth', 0.12);
+  if (pos % 2 === 1) { const c = CH2[root]; tone(mtof(c[(pos >> 1) % 3] + 12), t, STEP2 * 0.9, 'sine', 0.08); }
+  if (pos % 2 === 0) { const ctx = A.ctx, o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.12); o.connect(g); g.connect(A.mg); g.gain.setValueAtTime(0.6, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16); o.start(t); o.stop(t + 0.18); }
+  if (pos === 2 || pos === 6) noiseHit(t, 0.12, 'bandpass', 1800, 0.35);
+  noiseHit(t, 0.03, 'highpass', 7000, 0.1); noiseHit(t + STEP2 / 2, 0.03, 'highpass', 7000, 0.1);
+}
+const BGM = TRACK.bgm === 'medium' ? { play: playStep2, step: STEP2 } : { play: playStep, step: STEP };
 setInterval(() => {
   if (!A.ctx || !A.musicOn || A.ctx.state !== 'running') return;
   const now = A.ctx.currentTime; if (nextT < now) nextT = now + 0.05;
-  while (nextT < now + 0.15) { playStep(step, nextT); nextT += STEP; step = (step + 1) % 64; }
+  while (nextT < now + 0.15) { BGM.play(step, nextT); nextT += BGM.step; step = (step + 1) % 64; }
 }, 40);
 function beep(f, dur) { if (!A.ctx) return; tone(f, A.ctx.currentTime, dur, 'square', 0.12, A.master); }
 let lastHorn = 0;
@@ -788,10 +909,12 @@ function onMsg(topic, payload) {
   const want = NET.role === 'host' ? 'guest' : 'host';
   if (m.r !== want) return;
   if (NET.partner && m.from !== NET.partner) return;
+  const hostTrk = m.t === 'hello' ? m.trk : m.t === 'state' && m.d ? m.d.trk : undefined;
+  if (NET.role === 'guest' && (hostTrk === 1 || hostTrk === 2) && hostTrk !== TRACK_ID) return switchTrack(hostTrk);
   if (!NET.partner) {
     if (m.t !== 'hello') return;
     NET.partner = m.from; NET.lastSeq = -1; NET.state = 'connected'; lastSent = '';
-    pub({ t: 'hello' }); updateLobby();
+    pub({ t: 'hello', trk: TRACK_ID }); updateLobby();
   }
   if (m.seq <= NET.lastSeq) return; // same message via the second broker, or out of order
   NET.lastSeq = m.seq; NET.lastRecv = performance.now();
@@ -801,6 +924,12 @@ function onMsg(topic, payload) {
 function dropPartner() {
   NET.partner = null; NET.opp = null; G.ready = false;
   NET.state = NET.role === 'host' ? 'hosting' : 'lost'; updateLobby();
+}
+function switchTrack(hostTrk) {
+  if (NET.state === 'switching') return;
+  NET.state = 'switching'; NET.err = '對方選的是' + TRACKS[hostTrk].label + '，切換賽道中…';
+  pub({ t: 'bye' }); updateLobby();
+  setTimeout(() => { location.href = '?track=' + hostTrk + '&join=' + NET.code; }, 200); // short delay so the bye is sent first
 }
 function connectAll() {
   if (!window.mqtt) return false;
@@ -816,7 +945,7 @@ function connectAll() {
   NET.timers.push(setTimeout(() => { if (NET.state === 'opening') netFail('連不上連線伺服器，請確認網路後再試一次'); }, 20000));
   NET.timers.push(setInterval(() => {
     if (NET.partner && performance.now() - NET.lastRecv > 8000) dropPartner();
-    if (NET.role === 'guest' && !NET.partner && NET.state === 'joining') pub({ t: 'hello' });
+    if (NET.role === 'guest' && !NET.partner && NET.state === 'joining') pub({ t: 'hello', trk: TRACK_ID });
     if (NET.partner && performance.now() - lastSentT > 900) sendPresence(true);
   }, 1000));
   return true;
@@ -847,7 +976,7 @@ function sendPresence(force) {
   if (!force && now - lastSentT < 90) return;
   const st = G.phase === 'race' || G.phase === 'done' || G.phase === 'count'
     ? [+me.x.toFixed(2), +me.y.toFixed(2), +me.z.toFixed(2), +me.h.toFixed(3), +me.v.toFixed(2), +me.pitch.toFixed(3), +input.steer.toFixed(2)] : null;
-  const o = { pick: G.pick, ready: G.ready, phase: G.phase, st, lap: G.lap, idx: me.idx, horn: G.hornN, fin: G.fin, bx: BOOST_EATS.slice() };
+  const o = { pick: G.pick, ready: G.ready, phase: G.phase, st, lap: G.lap, idx: me.idx, horn: G.hornN, fin: G.fin, bx: BOOST_EATS.slice(), trk: TRACK_ID };
   const s = JSON.stringify(o);
   if (!force && s === lastSent && now - lastSentT < 1000) return;
   lastSent = s; lastSentT = now;
@@ -873,11 +1002,16 @@ for (const t of ['f1', 'bug']) cards[t].addEventListener('click', () => {
 $('readyBtn').addEventListener('click', () => { initAudio(); if (!G.pick) return; G.ready = !G.ready; sendPresence(true); updateLobby(); });
 $('soloBtn').addEventListener('click', () => { initAudio(); if (!G.pick) return; G.ready = true; startCountdown(true); });
 $('againBtn').addEventListener('click', () => {
-  G.phase = 'lobby'; G.ready = false; G.fin = null; G.lap = 0; G.solo = false; boostUntil = 0;
+  G.phase = 'lobby'; G.ready = false; G.fin = null; G.lap = 0; G.solo = false; boostUntil = 0; MO.forEach(m => m.hitAt = null);
   $('result').hidden = true; $('lobby').hidden = false; $('hud').hidden = true; $('controls').hidden = true;
   parkAll(); sendPresence(true); updateLobby();
 });
 $('music').addEventListener('click', () => { initAudio(); A.musicOn = !A.musicOn; $('music').textContent = A.musicOn ? '音樂 開' : '音樂 關'; });
+for (const id of [1, 2]) {
+  const b = $('trk-' + id); b.classList.toggle('sel', id === TRACK_ID);
+  b.addEventListener('click', () => { if (id !== TRACK_ID) location.href = '?track=' + id; });
+}
+$('trackName').textContent = TRACK.name;
 
 function updateLobby() {
   if (G.phase !== 'lobby') return;
@@ -890,12 +1024,14 @@ function updateLobby() {
     tag.textContent = G.pick === t ? '你' : '對手';
   }
   let msg, codeLook = false;
-  $('netRow').hidden = NET.state === 'connected' || NET.state === 'hosting' || NET.state === 'opening' || NET.state === 'joining';
+  $('netRow').hidden = NET.state === 'connected' || NET.state === 'hosting' || NET.state === 'opening' || NET.state === 'joining' || NET.state === 'switching';
+  const trkLock = ['opening', 'hosting', 'joining', 'connected', 'switching'].includes(NET.state);
+  for (const id of [1, 2]) $('trk-' + id).disabled = trkLock;
   if (NET.state === 'idle') msg = '按「開房間」拿到房號，或輸入對方的房號';
   else if (NET.state === 'opening') msg = NET.role === 'guest' ? '連線中…' : '開房間中…';
   else if (NET.state === 'hosting') { msg = '房號 ' + NET.code + '　請對方輸入這個號碼'; codeLook = true; }
   else if (NET.state === 'joining') msg = '連線中…';
-  else if (NET.state === 'error') msg = NET.err;
+  else if (NET.state === 'error' || NET.state === 'switching') msg = NET.err;
   else if (NET.state === 'lost') msg = '連線中斷了，請重新加入';
   else if (!o) msg = '已連上，等對方畫面準備好…';
   else if (op.phase === 'race' || op.phase === 'done') msg = '對手還在跑，等對方跑完再一起開';
@@ -910,7 +1046,7 @@ function updateLobby() {
 }
 
 function startCountdown(solo) {
-  G.solo = solo; G.phase = 'count'; G.countAt = performance.now(); G.lastCount = -1; G.lap = 0; G.fin = null; boostUntil = 0; BOOSTS.forEach(b => b.hideUntil = 0);
+  G.solo = solo; G.phase = 'count'; G.countAt = performance.now(); G.lastCount = -1; G.lap = 0; G.fin = null; boostUntil = 0; BOOSTS.forEach(b => b.hideUntil = 0); MO.forEach(m => m.hitAt = null);
   const g = gridSpot(G.pick); Object.assign(me, { x: g.x, y: g.y, z: g.z, h: g.h, v: 0, idx: g.idx, pitch: 0 });
   $('lobby').hidden = true; $('hud').hidden = false; $('controls').hidden = false; $('result').hidden = true;
   $('rank').hidden = solo; camInit = true; resetStick();
@@ -933,9 +1069,97 @@ function drawMap() {
   mctx.fillStyle = '#fff'; mctx.fillRect(mx(P[0].x) - 6, mz(P[0].z) - 3, 12, 6);
   const dot = (x, z, c, r) => { mctx.beginPath(); mctx.arc(mx(x), mz(z), r, 0, 7); mctx.fillStyle = c; mctx.fill(); mctx.lineWidth = 3; mctx.strokeStyle = '#0b2a5b'; mctx.stroke(); };
   TR.forEach(c => dot(c.x, c.z, '#c3cbd6', 6));
+  MO.forEach(m => { if (!m.away) dot(m.x, m.z, '#ff9f1c', 4); });
   BOOSTS.forEach(b => { if (b.root.visible) dot(b.x, b.z, '#ffd43b', 6); });
   if (opp.seen && opp.car) dot(opp.x, opp.z, opp.car === 'f1' ? '#ff7a00' : '#1ea5ec', 8);
   dot(me.x, me.z, G.pick === 'f1' ? '#ff7a00' : '#1ea5ec', 11);
+}
+
+/* ---------------- boost fx: exhaust flames, sparks, speed lines, edge glow, tiny shake (camera fov/distance untouched) ---------------- */
+const fxCanvas = $('fx'), fxCtx = fxCanvas.getContext('2d'), glowEl = $('glow');
+const FX = { lv: 0, on: false, w: 0, h: 0, dirty: false, shake: new THREE.Vector3(), back: 3.4, up: 0.8, sparkAcc: 0, sparkI: 0, lines: [] };
+const SPARK_N = 140;
+for (let i = 0; i < 70; i++) FX.lines.push({ a: Math.random() * Math.PI * 2, f: Math.random(), s: 1.2 + Math.random() * 1.2, len: 0.12 + Math.random() * 0.18, gold: i % 4 === 0 });
+function sizeFx() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  FX.w = innerWidth; FX.h = innerHeight;
+  fxCanvas.width = Math.round(FX.w * dpr); fxCanvas.height = Math.round(FX.h * dpr);
+  fxCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+sizeFx(); addEventListener('resize', sizeFx); addEventListener('orientationchange', sizeFx);
+const FLAMES = { f1: [], bug: [] };
+for (const t of ['f1', 'bug']) for (let k = 0; k < 2; k++) {
+  const f = new THREE.Mesh(new THREE.ConeGeometry(0.42, 1, 10, 1, true).translate(0, 0.5, 0), new THREE.MeshBasicMaterial({ color: 0xffc93c, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+  f.rotation.x = -Math.PI / 2; f.visible = false; CARS[t].root.add(f); FLAMES[t].push(f);
+}
+const SP = { pos: new Float32Array(SPARK_N * 3), col: new Float32Array(SPARK_N * 3), vel: new Float32Array(SPARK_N * 3), life: new Float32Array(SPARK_N), max: new Float32Array(SPARK_N) };
+const spGeo = new THREE.BufferGeometry();
+spGeo.setAttribute('position', new THREE.BufferAttribute(SP.pos, 3)); spGeo.setAttribute('color', new THREE.BufferAttribute(SP.col, 3));
+const sparks = new THREE.Points(spGeo, new THREE.PointsMaterial({ size: 0.45, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+sparks.frustumCulled = false; sparks.visible = false; scene.add(sparks);
+// rear exhaust point in car-root units (glb models use root scale 1, fallback box uses 1.8)
+function rearSpot(car) {
+  const g = car.body && car.body.geometry;
+  if (g && g.attributes.position) {
+    g.computeBoundingBox(); const b = g.boundingBox;
+    return { x: (b.max.x - b.min.x) * 0.2, y: b.min.y + (b.max.y - b.min.y) * 0.3, z: b.min.z + 0.1 };
+  }
+  return { x: 0.22, y: 0.45, z: -1.9 };
+}
+function updateBoostFx(dt) {
+  const racing = G.phase === 'race', on = racing && performance.now() < boostUntil;
+  FX.lv = on ? 1 : racing ? Math.max(0, FX.lv - dt / 0.4) : 0;
+  const lv = FX.lv;
+  if (lv <= 0) {
+    FX.on = false; FX.shake.set(0, 0, 0); glowEl.style.opacity = 0;
+    if (FX.dirty) { fxCtx.clearRect(0, 0, FX.w, FX.h); FX.dirty = false; }
+    sparks.visible = false; SP.life.fill(0);
+    for (const t of ['f1', 'bug']) FLAMES[t].forEach(f => { f.visible = false; });
+    return;
+  }
+  const car = CARS[G.pick], k = car.root.scale.x, fl = FLAMES[G.pick];
+  if (!FX.on) {
+    FX.on = true; const s = rearSpot(car);
+    fl[0].position.set(-s.x, s.y, s.z); fl[1].position.set(s.x, s.y, s.z);
+    FX.back = -s.z * k; FX.up = s.y * k;
+  }
+  // exhaust flames: flicker length and opacity every frame
+  for (const f of fl) { f.visible = true; const w = 1 + Math.random() * 0.35; f.scale.set(w, lv * (2.4 + Math.random() * 1.6), w); f.material.opacity = 0.75 + Math.random() * 0.25; }
+  // sparks: spawn behind the car, drift backward relative to it, fade out
+  const fx = Math.sin(me.h), fz = Math.cos(me.h);
+  sparks.visible = true;
+  for (let i = 0; i < SPARK_N; i++) {
+    const j = i * 3;
+    if (SP.life[i] > 0) {
+      SP.life[i] -= dt;
+      SP.pos[j] += SP.vel[j] * dt; SP.pos[j + 1] += SP.vel[j + 1] * dt; SP.pos[j + 2] += SP.vel[j + 2] * dt;
+      const w = Math.max(0, SP.life[i]) / SP.max[i] * lv;
+      SP.col[j] = w; SP.col[j + 1] = w * 0.65; SP.col[j + 2] = w * 0.2;
+    } else SP.col[j] = SP.col[j + 1] = SP.col[j + 2] = 0;
+  }
+  FX.sparkAcc += dt * 160 * lv;
+  while (FX.sparkAcc >= 1) {
+    FX.sparkAcc -= 1;
+    const i = FX.sparkI, j = i * 3; FX.sparkI = (i + 1) % SPARK_N;
+    SP.pos.set([me.x - fx * FX.back + (Math.random() - 0.5) * 0.5, me.y + FX.up + (Math.random() - 0.5) * 0.3, me.z - fz * FX.back + (Math.random() - 0.5) * 0.5], j);
+    const along = me.v * 0.9 - 2 - Math.random() * 4;
+    SP.vel.set([fx * along + (Math.random() - 0.5) * 3, 0.5 + Math.random() * 1.5, fz * along + (Math.random() - 0.5) * 3], j);
+    SP.life[i] = SP.max[i] = 0.35 + Math.random() * 0.3;
+  }
+  spGeo.attributes.position.needsUpdate = true; spGeo.attributes.color.needsUpdate = true;
+  // speed lines: white streaks radiating from the centre
+  const cx = FX.w / 2, cy = FX.h / 2, R = Math.hypot(cx, cy);
+  fxCtx.clearRect(0, 0, FX.w, FX.h); FX.dirty = true; fxCtx.lineCap = 'round';
+  for (const L of FX.lines) {
+    L.f += dt * L.s; if (L.f > 1) { L.f -= 1; L.a = Math.random() * Math.PI * 2; }
+    const c = Math.cos(L.a), s = Math.sin(L.a), d1 = R * (0.12 + 0.88 * L.f), d2 = d1 + R * L.len;
+    fxCtx.strokeStyle = `rgba(255,${L.gold ? 214 : 255},${L.gold ? 80 : 255},${(lv * 0.85 * Math.min(1, L.f * 2.5)).toFixed(3)})`;
+    fxCtx.lineWidth = 1.5 + 4.5 * L.f;
+    fxCtx.beginPath(); fxCtx.moveTo(cx + c * d1, cy + s * d1); fxCtx.lineTo(cx + c * d2, cy + s * d2); fxCtx.stroke();
+  }
+  glowEl.style.opacity = (lv * (0.8 + 0.2 * Math.sin(performance.now() / 70))).toFixed(3);
+  // tiny camera shake (+-0.05 m)
+  FX.shake.set((Math.random() - 0.5) * 0.16 * lv, (Math.random() - 0.5) * 0.16 * lv, (Math.random() - 0.5) * 0.16 * lv);
 }
 
 /* ---------------- loop ---------------- */
@@ -947,11 +1171,11 @@ function physics(dt) {
   const finished = G.phase === 'done';
   let gas = racing && input.gas, brake = racing && input.brake, steer = racing || finished ? input.steer : 0;
   if (finished) { gas = false; brake = me.v > 6; }
-  if (racing && performance.now() < boostUntil) me.v = Math.min(BOOST_V, me.v + 30 * dt);
+  if (racing && performance.now() < boostUntil) me.v = Math.min(BOOST_V, me.v + 30 * TRACK.accelScale * dt);
   else {
     if (brake && !gas) { me.v -= (me.v > 0 ? 22 : 4) * dt; if (me.v < -5) me.v = -5; }
     else if (me.v > VMAX) me.v = Math.max(VMAX, me.v - 15 * dt);
-    else if (gas) me.v = Math.min(VMAX, me.v + 11 * (1 - 0.85 * me.v / VMAX) * dt);
+    else if (gas) me.v = Math.min(VMAX, me.v + 11 * TRACK.accelScale * (1 - 0.85 * me.v / VMAX) * dt);
     else { me.v -= Math.sign(me.v) * Math.min(Math.abs(me.v), 2.6 * dt); }
   }
   const n = nearestIdx(me.x, me.z, me.idx, 18); const i = n.i;
@@ -962,6 +1186,7 @@ function physics(dt) {
   if (Math.abs(steer) < 0.15 && sp > 2 && Math.abs(off) < 1.0 && me.v > 0) me.h += off * 0.9 * dt; // gentle auto-steer
   me.x += Math.sin(me.h) * me.v * dt; me.z += Math.cos(me.h) * me.v * dt;
   hitTraffic();
+  hitMotos();
   // stay on the road
   const n2 = nearestIdx(me.x, me.z, i, 6), j = n2.i;
   const dx = me.x - P[j].x, dz = me.z - P[j].z;
@@ -1027,6 +1252,7 @@ function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   readInput();
+  updateBoostFx(dt);
   clouds.forEach(c => { c.position.x += dt * 2.5; if (c.position.x > CX + 1100) c.position.x = CX - 1100; });
   const op = readOpp(dt);
 
@@ -1036,6 +1262,7 @@ function frame(now) {
     if (o && o.presence && G.pick && o.presence.pick === G.pick) { const mine = myPeerId(); if (mine && mine > o.peer) { G.pick = null; G.ready = false; sendPresence(true); updateLobby(); } }
     if (G.ready && o && o.presence && o.presence.ready && o.presence.pick && o.presence.pick !== G.pick && (o.presence.phase === 'lobby' || o.presence.phase === 'count')) startCountdown(false);
     updateTraffic(now / 1000, dt);
+    updateMotos(now / 1000, dt);
     updateBoosts(now / 1000, dt);
     orbit += dt * 0.05;
     camera.position.set(CX + Math.cos(orbit) * 600, 230, CZ + Math.sin(orbit) * 600);
@@ -1054,6 +1281,7 @@ function frame(now) {
   }
 
   updateTraffic((now - G.countAt) / 1000, dt);
+  updateMotos((now - G.countAt) / 1000, dt);
   updateBoosts(now / 1000, dt);
   const ctl = physics(dt);
   updateEngineAudio(true, ctl.gas, ctl.brake);
@@ -1066,12 +1294,13 @@ function frame(now) {
 
   // camera
   const fx = Math.sin(me.h), fz = Math.cos(me.h), back = 9.5;
-  tmp.set(me.x - fx * back, me.y + 4.6, me.z - fz * back);
-  const ground = me.y + 2.5; if (tmp.y < ground) tmp.y = ground;
-  if (camInit) { camPos.copy(tmp); camLook.set(me.x, me.y + 2.2, me.z); camInit = false; }
+  // smooth the camera offset relative to the car (not world position), so the distance never grows with speed
+  tmp.set(-fx * back, 4.6, -fz * back);
+  if (camInit) { camPos.copy(tmp); camLook.set(0, 2.2, 0); camInit = false; }
   camPos.lerp(tmp, 1 - Math.exp(-5 * dt));
-  camLook.lerp(new THREE.Vector3(me.x + fx * 9, me.y + 2.4, me.z + fz * 9), 1 - Math.exp(-8 * dt));
-  camera.position.copy(camPos); camera.lookAt(camLook);
+  camLook.lerp(new THREE.Vector3(fx * 9, 2.4, fz * 9), 1 - Math.exp(-8 * dt));
+  camera.position.set(me.x + camPos.x, Math.max(me.y + camPos.y, me.y + 2.5), me.z + camPos.z).add(FX.shake);
+  camera.lookAt(me.x + camLook.x, me.y + camLook.y, me.z + camLook.z);
   const fov = 62; if (Math.abs(camera.fov - fov) > 0.05) { camera.fov = fov; camera.updateProjectionMatrix(); }
 
   // HUD
@@ -1107,6 +1336,11 @@ function fillResult(p) {
 
 requestAnimationFrame(frame);
 updateLobby();
+const autoCode = new URLSearchParams(location.search).get('join');
+if (autoCode && /^\d{4}$/.test(autoCode)) {
+  const u = new URL(location.href); u.searchParams.delete('join'); history.replaceState(null, '', u.pathname + u.search);
+  joinRoom(autoCode);
+}
 })();
 </script>
 </body>
