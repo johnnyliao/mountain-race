@@ -43,6 +43,9 @@ button:focus-visible{outline:3px solid var(--papaya);outline-offset:3px}
 #count.pop{animation:pop .5s ease-out}
 @keyframes pop{from{transform:translate(-50%,-50%) scale(1.8);opacity:0}to{transform:translate(-50%,-50%) scale(1);opacity:1}}
 #toast{position:absolute;left:50%;top:calc(14px + env(safe-area-inset-top,0px));transform:translateX(-50%);padding:4px 14px;font-family:var(--f-display);font-size:17px}
+/* rear-view mirror: top centre during races; the WebGL quad is drawn under this border-only frame */
+#mirror{position:fixed;left:50%;top:calc(8px + env(safe-area-inset-top,0px));transform:translateX(-50%);width:min(36vw,320px);height:calc(min(36vw,320px) / 3.2);border:5px solid var(--navy);border-radius:14px;box-shadow:0 4px 8px rgba(11,42,91,.35);pointer-events:none}
+#hud.mirror-on #toast{top:calc(16px + env(safe-area-inset-top,0px) + min(36vw,320px) / 3.2)}
 /* boost fx layers: above the 3D canvas, below HUD/controls */
 #fx{position:fixed;inset:0;width:100%;height:100%;pointer-events:none}
 #glow{position:fixed;inset:0;pointer-events:none;opacity:0;background:radial-gradient(ellipse at center,rgba(255,170,0,0) 38%,rgba(255,120,0,.85) 100%)}
@@ -113,6 +116,7 @@ h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:clamp(28px,6v
   <div id="mapwrap" class="sticker"><canvas id="minimap" width="240" height="240"></canvas></div>
   <button id="music" class="sticker" type="button">音樂 開</button>
   <div id="toast" class="sticker" hidden></div>
+  <div id="mirror" hidden></div>
   <div id="count" hidden></div>
 </div>
 
@@ -734,20 +738,33 @@ const BOOST_V = TRACK.boostKmh / 3.6, BOOST_LANES = [4.6, -4.6];
 let boostUntil = 0;
 const BOOST_EATS = new Array(TRACK.boostAt.length * 2).fill(0);
 const BOOSTS = [];
+const ARROW_SHAPE = new THREE.Shape([[0, 1.7], [1.3, 0.4], [0.5, 0.4], [0.5, -1.3], [-0.5, -1.3], [-0.5, 0.4], [-1.3, 0.4]].map(p => new THREE.Vector2(p[0], p[1])));
+const ARROW_GEO = new THREE.ExtrudeGeometry(ARROW_SHAPE, { depth: 0.4, bevelEnabled: true, bevelSize: 0.08, bevelThickness: 0.08, bevelSegments: 1 }).translate(0, 0, -0.2);
+const ARROW_MAT = M(0xffc400, { emissive: 0xff8c00 });
+const ARROW_RIM_GEO = new THREE.ShapeGeometry(new THREE.Shape([[0, 2.15], [1.75, 0.2], [0.75, 0.2], [0.75, -1.55], [-0.75, -1.55], [-0.75, 0.2], [-1.75, 0.2]].map(p => new THREE.Vector2(p[0], p[1]))));
+const ARROW_RIM_MAT = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+const CHEV_GEO = new THREE.ShapeGeometry(new THREE.Shape([[-1.7, -0.5], [0, 0.9], [1.7, -0.5], [1.7, -1.3], [0, 0.1], [-1.7, -1.3]].map(p => new THREE.Vector2(p[0], p[1]))));
 for (const f of TRACK.boostAt) for (const lane of BOOST_LANES) {
   const a = trackAt(f * TRACK_LEN), root = new THREE.Group();
-  const gem = new THREE.Mesh(new THREE.OctahedronGeometry(1.4), M(0xffaa00, { emissive: 0xffaa00 }));
-  const ring = new THREE.Mesh(new THREE.RingGeometry(2.2, 3.0, 28), new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.7, depthWrite: false }));
-  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.1; gem.position.y = 1.6;
-  root.add(gem, ring); root.position.set(a.x + L[a.i].x * lane, a.y, a.z + L[a.i].z * lane); scene.add(root);
-  BOOSTS.push({ x: root.position.x, z: root.position.z, y: a.y + 1.6, root, gem, hideUntil: 0 });
+  // floating upright "up" arrow facing the approaching player + 3 flashing chevrons on the road pointing forward
+  const gem = new THREE.Group();
+  gem.add(new THREE.Mesh(ARROW_GEO, ARROW_MAT), new THREE.Mesh(ARROW_RIM_GEO, ARROW_RIM_MAT));
+  gem.position.y = 2.2;
+  const chev = [];
+  for (let c = 0; c < 3; c++) {
+    const m = new THREE.Mesh(CHEV_GEO, new THREE.MeshBasicMaterial({ color: 0xffd43b, transparent: true, opacity: 0.8, depthWrite: false, side: THREE.DoubleSide }));
+    m.rotation.x = Math.PI / 2; m.position.set(0, 0.12, (c - 1) * 2.4); root.add(m); chev.push(m);
+  }
+  root.add(gem); root.rotation.y = a.h; root.position.set(a.x + L[a.i].x * lane, a.y, a.z + L[a.i].z * lane); scene.add(root);
+  BOOSTS.push({ x: root.position.x, z: root.position.z, y: a.y + 1.6, root, gem, chev, hideUntil: 0 });
 }
 function updateBoosts(t, dt) {
   const now = performance.now(), racing = G.phase === 'race';
   for (const [k, b] of BOOSTS.entries()) {
     b.root.visible = now >= b.hideUntil;
     if (!b.root.visible) continue;
-    b.gem.rotation.y += dt * 2; b.gem.position.y = 1.6 + Math.sin(t * 2.5) * 0.25;
+    b.gem.position.y = 2.2 + Math.sin(t * 2.5) * 0.3; b.gem.scale.setScalar(1 + Math.sin(t * 5) * 0.06);
+    b.chev.forEach((c, n) => { c.material.opacity = 0.3 + 0.7 * Math.max(0, Math.sin(t * 6 - n * 1.3)); });
     if (racing && Math.hypot(me.x - b.x, me.z - b.z) < 4 && Math.abs(me.y - b.y) < 4) {
       b.hideUntil = now + 5000; boostUntil = now + 3000; BOOST_EATS[k]++; sendPresence(true); boostSound(); showToast('加速！', 1200);
     }
@@ -1248,6 +1265,65 @@ function readOpp(dt) {
   return p;
 }
 
+/* ---------------- rear-view mirror (race only) ----------------
+   Rendered from behind the car into a small render target, then drawn as a quad.
+   The quad's u is flipped so the view reads like a real mirror (rear-left shows on the left). */
+const mirrorEl = $('mirror'), hudEl = $('hud');
+const mirrorCam = new THREE.PerspectiveCamera(55, 3.2, 0.5, 600);
+const mirrorRT = new THREE.WebGLRenderTarget(512, 160);
+const mirrorQuadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const mirrorQuadScene = new THREE.Scene();
+const mirrorGeo = new THREE.PlaneGeometry(2, 2);
+const mirrorUV = mirrorGeo.attributes.uv;
+for (let i = 0; i < mirrorUV.count; i++) mirrorUV.setX(i, 1 - mirrorUV.getX(i));
+const mirrorMat = new THREE.ShaderMaterial({
+  uniforms: { map: { value: mirrorRT.texture }, size: { value: new THREE.Vector2(1, 1) }, r: { value: 14 } },
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: 'uniform sampler2D map; uniform vec2 size; uniform float r; varying vec2 vUv;' +
+    ' void main() { vec2 q = abs((vUv - 0.5) * size) - (size * 0.5 - vec2(r));' +
+    ' float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;' +
+    ' if (d > 0.0) discard; gl_FragColor = texture2D(map, vUv); }',
+  depthTest: false, depthWrite: false
+});
+mirrorQuadScene.add(new THREE.Mesh(mirrorGeo, mirrorMat));
+let mirrorShown = false, mirrorBox = null;
+function layoutMirror() {
+  const b = mirrorEl.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.min(Math.round(b.width * dpr), 640);
+  mirrorRT.setSize(w, Math.round(w * b.height / b.width));
+  mirrorCam.aspect = mirrorRT.width / mirrorRT.height; mirrorCam.updateProjectionMatrix();
+  mirrorMat.uniforms.size.value.set(b.width, b.height);
+  mirrorBox = { x: b.left, y: b.top, w: b.width, h: b.height };
+}
+function setMirror(on) {
+  if (on === mirrorShown) return;
+  mirrorShown = on; mirrorEl.hidden = !on; hudEl.classList.toggle('mirror-on', on);
+  if (on) layoutMirror();
+}
+addEventListener('resize', () => { if (mirrorShown) layoutMirror(); });
+addEventListener('orientationchange', () => { if (mirrorShown) layoutMirror(); });
+function renderMirror() {
+  const fx = Math.sin(me.h), fz = Math.cos(me.h);
+  mirrorCam.position.set(me.x + fx * 1.5, me.y + 3.2, me.z + fz * 1.5);
+  mirrorCam.lookAt(me.x - fx * 30, me.y + 2.4, me.z - fz * 30);
+  const own = CARS[G.pick].root, ownVis = own.visible; // a real mirror never shows the driver's own car
+  own.visible = false;
+  renderer.setRenderTarget(mirrorRT);
+  renderer.render(scene, mirrorCam);
+  renderer.setRenderTarget(null);
+  own.visible = ownVis;
+}
+function drawMirror() {
+  const b = mirrorBox, by = innerHeight - b.y - b.h; // viewport/scissor y is measured from the bottom
+  renderer.setScissorTest(true);
+  renderer.setViewport(b.x, by, b.w, b.h); renderer.setScissor(b.x, by, b.w, b.h);
+  renderer.autoClear = false;
+  renderer.render(mirrorQuadScene, mirrorQuadCam);
+  renderer.autoClear = true;
+  renderer.setViewport(0, 0, innerWidth, innerHeight); renderer.setScissor(0, 0, innerWidth, innerHeight);
+  renderer.setScissorTest(false);
+}
+
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
@@ -1269,6 +1345,7 @@ function frame(now) {
     camera.lookAt(CX, 10, CZ);
     sendPresence(false);
     updateEngineAudio(false, false, false);
+    setMirror(false);
     renderer.render(scene, camera); return;
   }
 
@@ -1319,7 +1396,10 @@ function frame(now) {
   drawMap();
   sendPresence(false);
   if (G.phase === 'done' && !$('result').hidden) fillResult(op);
+  setMirror($('result').hidden);
+  if (mirrorShown) renderMirror();
   renderer.render(scene, camera);
+  if (mirrorShown) drawMirror();
 }
 
 function showResult() { $('result').hidden = false; $('controls').hidden = true; fillResult((getOpp() || {}).presence); }
