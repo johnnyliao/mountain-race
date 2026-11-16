@@ -269,6 +269,18 @@ scene.add(new THREE.HemisphereLight(0xcfe9ff, 0x5d8a3c, 0.78));
 const sun = new THREE.DirectionalLight(0xfff0d0, 0.95); sun.position.set(300, 420, 160); scene.add(sun);
 
 const M = (c, o) => new THREE.MeshLambertMaterial(Object.assign({ color: c }, o || {}));
+// player-car reflections: one procedural equirect environment (sky, sun, green ground), used only by the car materials
+const CAR_ENV = (function carEnv() {
+  const c = document.createElement('canvas'); c.width = 512; c.height = 256; const g = c.getContext('2d');
+  const gr = g.createLinearGradient(0, 0, 0, 256);
+  gr.addColorStop(0, '#3f97e0'); gr.addColorStop(0.45, '#8cc8f2'); gr.addColorStop(0.5, '#dff0fa'); gr.addColorStop(0.56, '#9aa0a4'); gr.addColorStop(1, '#5f6669');
+  g.fillStyle = gr; g.fillRect(0, 0, 512, 256);
+  const sun = g.createRadialGradient(150, 60, 0, 150, 60, 36); sun.addColorStop(0, '#fffbe8'); sun.addColorStop(1, 'rgba(255,251,232,0)');
+  g.fillStyle = sun; g.fillRect(100, 10, 100, 100);
+  const tex = new THREE.CanvasTexture(c); tex.mapping = THREE.EquirectangularReflectionMapping;
+  const pm = new THREE.PMREMGenerator(renderer); const env = pm.fromEquirectangular(tex).texture; pm.dispose(); tex.dispose();
+  return env;
+})();
 
 /* ---------------- track ---------------- */
 const ctrl = TRACK.ctrl;
@@ -551,22 +563,27 @@ const FALLBACK = 1.8;
 for (const t of CAR_KEYS) { const c = CARS[t]; c.root.scale.setScalar(FALLBACK); c.wheels.forEach(w => w.r *= FALLBACK); c.half = (t === 'f1' || t === 'f60' ? 1.0 : 0.95) * FALLBACK; }
 const MODELS = { f1: { scale: 1.8 }, bug: { scale: 5.994 }, f60: { scale: 1.848 }, gt500: { scale: 1.764 } };
 const WHEEL_RE = /(^|[_\s-])(tire|tyre|rim|spoke|hub|whitewall|sidewall|axle|wheel)/i, TIRE_RE = /tire|tyre/i;
-function mergeParts(list) {
-  let n = 0; list.forEach(p => n += p.g.attributes.position.count);
-  const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), col = new Float32Array(n * 3); let o = 0;
-  list.forEach(p => {
-    const Pa = p.g.attributes.position, Na = p.g.attributes.normal, Ca = p.g.attributes.color;
-    const div = Ca && Ca.normalized ? (Ca.array instanceof Uint8Array ? 255 : Ca.array instanceof Uint16Array ? 65535 : 1) : 1;
-    for (let i = 0; i < Pa.count; i++, o++) {
-      pos[o * 3] = Pa.getX(i); pos[o * 3 + 1] = Pa.getY(i); pos[o * 3 + 2] = Pa.getZ(i);
-      nor[o * 3] = Na.getX(i); nor[o * 3 + 1] = Na.getY(i); nor[o * 3 + 2] = Na.getZ(i);
-      if (Ca) { let r = Ca.getX(i), g = Ca.getY(i), b = Ca.getZ(i); if (div > 1 && (r > 1.0001 || g > 1.0001 || b > 1.0001)) { r /= div; g /= div; b /= div; } col[o * 3] = r; col[o * 3 + 1] = g; col[o * 3 + 2] = b; }
-      else col[o * 3] = col[o * 3 + 1] = col[o * 3 + 2] = 0.8;
-    }
-  });
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  return g;
+// PBR look per material role (the glb material name); paint is clear-coated, rubber and dark trim stay matte
+const CAR_STYLE = {
+  paint: { metalness: 0.5, roughness: 0.3, clearcoat: 0.6, clearcoatRoughness: 0.08 },
+  chrome: { metalness: 1, roughness: 0.22 },
+  rubber: { metalness: 0, roughness: 0.9, envMapIntensity: 0.3 },
+  white: { metalness: 0.05, roughness: 0.35 },
+  black: { metalness: 0.15, roughness: 0.45 },
+  glass: { metalness: 0.1, roughness: 0.05, transparent: true, opacity: 0.8 },
+  light: { metalness: 0, roughness: 0.15 },
+  decal: { metalness: 0, roughness: 0.3 }
+};
+const carMats = new Map();
+function carMaterial(src) {
+  if (!carMats.has(src)) carMats.set(src, makeCarMaterial(src));
+  return carMats.get(src);
+}
+function makeCarMaterial(src) {
+  const s = CAR_STYLE[src.name] || CAR_STYLE.black;
+  if (src.map) src.map.encoding = THREE.LinearEncoding; // texture colours used as stored, like the rest of the scene
+  const o = { color: src.color.clone(), map: src.map || null, envMap: CAR_ENV, envMapIntensity: s.envMapIntensity || 1, metalness: s.metalness, roughness: s.roughness, transparent: !!s.transparent, opacity: s.opacity || 1 };
+  return s.clearcoat ? new THREE.MeshPhysicalMaterial(Object.assign(o, { clearcoat: s.clearcoat, clearcoatRoughness: s.clearcoatRoughness })) : new THREE.MeshStandardMaterial(o);
 }
 function applyModel(car, scn, scale) {
   scn.updateMatrixWorld(true);
@@ -575,9 +592,8 @@ function applyModel(car, scn, scale) {
   const parts = [];
   scn.traverse(o => {
     if (!o.isMesh) return;
-    let g = o.geometry.clone(); g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(B, o.matrixWorld)); g.computeVertexNormals();
-    if (g.index) g = g.toNonIndexed();
-    g.computeBoundingBox(); parts.push({ name: o.name || '', g, box: g.boundingBox.clone() });
+    const g = o.geometry.clone(); g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(B, o.matrixWorld));
+    g.computeBoundingBox(); parts.push({ name: o.name || '', g, box: g.boundingBox.clone(), mat: o.material });
   });
   if (!parts.length) return;
   const all = new THREE.Box3(); parts.forEach(p => all.union(p.box));
@@ -585,22 +601,25 @@ function applyModel(car, scn, scale) {
   if (!isFinite(ground)) ground = all.min.y;
   const off = new THREE.Vector3(0, -ground, -(all.min.z + all.max.z) / 2);
   all.translate(off);
-  const buckets = { body: [] };
-  parts.forEach(p => {
-    p.g.translate(off.x, off.y, off.z); p.box.translate(off);
-    if (WHEEL_RE.test(p.name)) { const c = p.box.getCenter(new THREE.Vector3()); const k = (c.z > 0 ? 'F' : 'R') + (c.x > 0 ? 'L' : 'R'); (buckets[k] = buckets[k] || []).push(p); }
-    else buckets.body.push(p);
-  });
-  const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
   car.root.remove(car.body); car.wheels.forEach(w => car.root.remove(w.steer));
   car.root.scale.setScalar(1);
-  car.body = new THREE.Mesh(mergeParts(buckets.body), mat); car.root.add(car.body);
+  car.body = new THREE.Group(); car.root.add(car.body);
+  // one mesh per prepared part (its material comes from the glb material name), wheels grouped by quadrant
+  const wheelParts = {}, body = new THREE.Box3();
+  parts.forEach(p => {
+    p.g.translate(off.x, off.y, off.z); p.box.translate(off);
+    const mesh = new THREE.Mesh(p.g, carMaterial(p.mat));
+    if (WHEEL_RE.test(p.name)) { const c = p.box.getCenter(new THREE.Vector3()); const k = (c.z > 0 ? 'F' : 'R') + (c.x > 0 ? 'L' : 'R'); (wheelParts[k] = wheelParts[k] || []).push({ mesh, box: p.box, name: p.name }); }
+    else { car.body.add(mesh); body.union(p.box); }
+  });
+  car.bodyBox = body;
   const wheels = []; let half = 0;
   for (const k of ['FL', 'FR', 'RL', 'RR']) {
-    const list = buckets[k]; if (!list) continue;
-    const tb = new THREE.Box3(); list.forEach(p => { if (TIRE_RE.test(p.name)) tb.union(p.box); }); if (tb.isEmpty()) list.forEach(p => tb.union(p.box));
-    const c = tb.getCenter(new THREE.Vector3()); const g = mergeParts(list); g.translate(-c.x, -c.y, -c.z);
-    const steer = new THREE.Group(); steer.position.copy(c); const spin = new THREE.Group(); steer.add(spin); spin.add(new THREE.Mesh(g, mat)); car.root.add(steer);
+    const list = wheelParts[k]; if (!list) continue;
+    const tb = new THREE.Box3(); list.forEach(w => { if (TIRE_RE.test(w.name)) tb.union(w.box); }); if (tb.isEmpty()) list.forEach(w => tb.union(w.box));
+    const c = tb.getCenter(new THREE.Vector3());
+    const steer = new THREE.Group(); steer.position.copy(c); const spin = new THREE.Group(); steer.add(spin);
+    list.forEach(w => { w.mesh.geometry.translate(-c.x, -c.y, -c.z); spin.add(w.mesh); }); car.root.add(steer);
     wheels.push({ steer, spin, r: Math.max(0.2, (tb.max.y - tb.min.y) / 2) });
     half = Math.max(half, Math.abs(tb.min.x), Math.abs(tb.max.x));
   }
@@ -1169,11 +1188,8 @@ const sparks = new THREE.Points(spGeo, new THREE.PointsMaterial({ size: 0.45, ma
 sparks.frustumCulled = false; sparks.visible = false; scene.add(sparks);
 // rear exhaust point in car-root units (glb models use root scale 1, fallback box uses 1.8)
 function rearSpot(car) {
-  const g = car.body && car.body.geometry;
-  if (g && g.attributes.position) {
-    g.computeBoundingBox(); const b = g.boundingBox;
-    return { x: (b.max.x - b.min.x) * 0.2, y: b.min.y + (b.max.y - b.min.y) * 0.3, z: b.min.z + 0.1 };
-  }
+  const b = car.bodyBox;
+  if (b) return { x: (b.max.x - b.min.x) * 0.2, y: b.min.y + (b.max.y - b.min.y) * 0.3, z: b.min.z + 0.1 };
   return { x: 0.22, y: 0.45, z: -1.9 };
 }
 function updateBoostFx(dt) {
