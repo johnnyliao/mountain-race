@@ -185,19 +185,6 @@ h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:clamp(28px,6v
         </svg>
         <span class="name">紅色法拉利</span>
       </button>
-      <button class="car sticker" id="pick-bug2" type="button" data-car="bug2">
-        <span class="tag" hidden></span>
-        <svg viewBox="0 0 220 80" aria-hidden="true">
-          <path d="M22 60 C22 40 40 36 58 34 C70 10 140 6 158 32 C180 34 198 42 200 60 Z" fill="#4ec0dd" stroke="#0b2a5b" stroke-width="3" stroke-linejoin="round"/>
-          <path d="M74 34 C84 18 132 14 146 33 Z" fill="#bfe9ff" stroke="#0b2a5b" stroke-width="3" stroke-linejoin="round"/>
-          <line x1="110" y1="18" x2="110" y2="34" stroke="#0b2a5b" stroke-width="3"/>
-          <circle cx="190" cy="46" r="6" fill="#fff" stroke="#0b2a5b" stroke-width="2"/>
-          <rect x="16" y="56" width="190" height="6" rx="3" fill="#ddd" stroke="#0b2a5b" stroke-width="2"/>
-          <circle cx="60" cy="60" r="15" fill="#222"/><circle cx="60" cy="60" r="7" fill="#fff"/>
-          <circle cx="164" cy="60" r="15" fill="#222"/><circle cx="164" cy="60" r="7" fill="#fff"/>
-        </svg>
-        <span class="name">藍色金龜車 2</span>
-      </button>
     </div>
     <div class="row">
       <button id="readyBtn" class="big sticker" type="button" disabled>先選一台車</button>
@@ -222,7 +209,6 @@ h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:clamp(28px,6v
 <script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <script src="model-beetle.js"></script>
 <script src="model-f60.js"></script>
-<script src="model-bug2.js"></script>
 <script>
 (() => {
 'use strict';
@@ -522,8 +508,8 @@ function makeCar(type) {
   root.rotation.order = 'YXZ';
   return { root, body, wheels, type, shadow: sh, half: 1, model: false };
 }
-// f60 and bug2 use the f1 / bug primitives until their .glb models load
-const CARS = { f1: makeCar('f1'), bug: makeCar('bug'), f60: makeCar('f1'), bug2: makeCar('bug') };
+// f60 uses the f1 primitives until its .glb model loads
+const CARS = { f1: makeCar('f1'), bug: makeCar('bug'), f60: makeCar('f1') };
 const CAR_KEYS = Object.keys(CARS);
 for (const t of CAR_KEYS) { scene.add(CARS[t].root); CARS[t].root.visible = false; }
 
@@ -546,7 +532,7 @@ function parkAll() {
 /* ---------------- 3D models (.glb) ---------------- */
 const FALLBACK = 1.8;
 for (const t of CAR_KEYS) { const c = CARS[t]; c.root.scale.setScalar(FALLBACK); c.wheels.forEach(w => w.r *= FALLBACK); c.half = (t === 'f1' || t === 'f60' ? 1.0 : 0.95) * FALLBACK; }
-const MODELS = { f1: { scale: 1.8 }, bug: { scale: 2.0 }, f60: { scale: 1.848 }, bug2: { scale: 5.994 } };
+const MODELS = { f1: { scale: 1.8 }, bug: { scale: 5.994 }, f60: { scale: 1.848 } };
 const WHEEL_RE = /(^|[_\s-])(tire|tyre|rim|spoke|hub|whitewall|sidewall|axle|wheel)/i, TIRE_RE = /tire|tyre/i;
 function mergeParts(list) {
   let n = 0; list.forEach(p => n += p.g.attributes.position.count);
@@ -1114,7 +1100,7 @@ let minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9;
 P.forEach(p => { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z); });
 const mScale = 200 / Math.max(maxX - minX, maxZ - minZ);
 const mx = x => 120 + (x - (minX + maxX) / 2) * -mScale, mz = z => 120 + (z - (minZ + maxZ) / 2) * -mScale;
-const CAR_HEX = { f1: '#ff7a00', bug: '#1ea5ec', f60: '#e10600', bug2: '#5cc8ff' };
+const CAR_HEX = { f1: '#ff7a00', bug: '#1ea5ec', f60: '#e10600' };
 function drawMap() {
   mctx.clearRect(0, 0, 240, 240);
   mctx.lineJoin = 'round'; mctx.beginPath(); P.forEach((p, i) => i ? mctx.lineTo(mx(p.x), mz(p.z)) : mctx.moveTo(mx(p.x), mz(p.z))); mctx.closePath();
