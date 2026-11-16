@@ -144,6 +144,7 @@ h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:clamp(28px,6v
     <div class="row" id="trackRow">
       <button id="trk-1" class="alt sticker trk" type="button">初級</button>
       <button id="trk-2" class="alt sticker trk" type="button">中級</button>
+      <button id="trk-3" class="alt sticker trk" type="button">困難</button>
       <span id="trackName" class="sticker"></span>
     </div>
     <div class="cars">
@@ -174,19 +175,18 @@ h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:clamp(28px,6v
         </svg>
         <span class="name">藍色金龜車</span>
       </button>
-      <button class="car sticker" id="pick-f60" type="button" data-car="f60">
+      <button class="car sticker" id="pick-sub" type="button" data-car="sub">
         <span class="tag" hidden></span>
         <svg viewBox="0 0 220 80" aria-hidden="true">
-          <rect x="18" y="20" width="12" height="30" rx="2" fill="#202024"/>
-          <rect x="10" y="16" width="36" height="8" rx="2" fill="#202024"/>
-          <path d="M28 52 L60 38 L96 36 L112 22 L132 22 L140 36 L196 44 L208 54 L204 58 L30 58 Z" fill="#e10600" stroke="#202024" stroke-width="3" stroke-linejoin="round"/>
-          <path d="M60 46 L150 44 L196 50" stroke="#202024" stroke-width="6" fill="none" stroke-linecap="round"/>
-          <circle cx="122" cy="26" r="8" fill="#fff" stroke="#202024" stroke-width="3"/>
-          <rect x="186" y="56" width="30" height="6" rx="2" fill="#202024"/>
-          <circle cx="52" cy="58" r="16" fill="#222" /><circle cx="52" cy="58" r="6" fill="#c8c8c8"/>
-          <circle cx="172" cy="60" r="13" fill="#222" /><circle cx="172" cy="60" r="5" fill="#c8c8c8"/>
+          <rect x="14" y="20" width="36" height="5" rx="2" fill="#0b2a5b"/>
+          <path d="M22 25 L26 40 M46 25 L42 40" stroke="#0b2a5b" stroke-width="3" stroke-linecap="round"/>
+          <path d="M26 56 L28 44 Q30 38 44 37 L70 33 Q88 16 122 16 Q150 16 162 31 L192 38 Q206 42 206 56 L204 60 L28 60 Z" fill="#1f4fa8" stroke="#0b2a5b" stroke-width="3" stroke-linejoin="round"/>
+          <path d="M80 38 Q94 25 120 25 Q142 25 152 36 Z" fill="#bfe9ff" stroke="#0b2a5b" stroke-width="2.5" stroke-linejoin="round"/>
+          <circle cx="202" cy="47" r="4" fill="#fff" stroke="#0b2a5b" stroke-width="2"/>
+          <circle cx="56" cy="58" r="15" fill="#222"/><circle cx="56" cy="58" r="8" fill="#e2b04a"/>
+          <circle cx="164" cy="60" r="15" fill="#222"/><circle cx="164" cy="60" r="8" fill="#e2b04a"/>
         </svg>
-        <span class="name">紅色法拉利</span>
+        <span class="name">Subaru 22B</span>
       </button>
       <button class="car sticker" id="pick-gt500" type="button" data-car="gt500">
         <span class="tag" hidden></span>
@@ -224,20 +224,23 @@ h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:clamp(28px,6v
 <script src="model-f1.js"></script>
 <script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <script src="model-beetle.js"></script>
-<script src="model-f60.js"></script>
+<script src="model-sub.js"></script>
 <script src="model-gt500.js"></script>
 <script>
 (() => {
 'use strict';
 const $ = id => document.getElementById(id);
-const TRACK_ID = new URLSearchParams(location.search).get('track') === '2' ? 2 : 1;
+const TRACK_ID = { 2: 2, 3: 3 }[new URLSearchParams(location.search).get('track')] || 1;
 const TRACKS = {
   1: { label: '初級', name: '初級　晴天山路', ctrl: [[0,0,0],[120,4,-20],[220,10,30],[262,16,140],[205,22,232],[95,26,252],[25,24,192],[-40,18,228],[-140,14,262],[-232,10,182],[-242,6,60],[-172,2,-40],[-82,0,-62]],
     N: 700, SC: 1.6, yScale: 1.3, CX: 10 * 1.6, CZ: 100 * 1.6, TW: 960 * 1.6, lake: { x: 10 * 1.6, z: 115 * 1.6 }, mountR: [300 * 1.6, 470 * 1.6],
     vmaxKmh: 140, accelScale: 1, boostKmh: 200, boostAt: [0.25, 0.75], cars: 16, motos: 6, trafficKmh: { left: 70, right: 85 }, bgm: 'easy' },
   2: { label: '中級', name: '中級　激情山路', ctrl: [[326.1,12.7,0],[343.8,15.6,84.8],[287.8,18.4,151],[212.8,20.8,188.5],[169.8,22.7,246.1],[121.9,24,321.3],[41.6,24.7,342.3],[-36.9,24.6,303.5],[-105,23.8,276.9],[-186.8,22.3,270.6],[-254.8,20.3,225.7],[-272.9,17.8,143.2],[-283.5,15,69.9],[-326.1,12,0],[-343.8,9.1,-84.8],[-287.8,6.3,-151],[-212.8,3.9,-188.5],[-169.8,2,-246.1],[-121.9,0.7,-321.3],[-41.6,0.1,-342.3],[36.9,0.1,-303.5],[105,0.9,-276.9],[186.8,2.4,-270.6],[254.8,4.4,-225.7],[272.9,6.9,-143.2],[283.5,9.7,-69.9]],
     N: 1050, SC: 1.6, yScale: 1.3, CX: 0, CZ: 0, TW: 1936, lake: null, mountR: [680, 952],
-    vmaxKmh: 210, accelScale: 1.5, boostKmh: 300, boostAt: [0.2, 0.53, 0.86], cars: 32, motos: 12, trafficKmh: { left: 95, right: 115 }, bgm: 'medium' }
+    vmaxKmh: 210, accelScale: 1.5, boostKmh: 300, boostAt: [0.2, 0.53, 0.86], cars: 32, motos: 12, trafficKmh: { left: 95, right: 115 }, bgm: 'medium' },
+  3: { label: '困難', name: '困難　極限山路', ctrl: [[410.4,11.8,-9.7],[472.3,14.4,68.7],[484.6,15,99.7],[488.3,13.6,145.3],[453,16.5,197.5],[399.9,19.6,242.7],[365,21.9,260.4],[307.1,20.3,283],[279.8,19.6,300],[249.7,18.2,351.3],[200.8,21.7,401.4],[188.5,20.4,420.5],[151.1,16.6,448.6],[98.7,13.5,459],[56,14.6,469.1],[-14.8,10.8,426.8],[-59.8,5.9,376.1],[-105.1,2.3,359.3],[-135.1,1.1,361.3],[-196.5,2.2,377.8],[-252.4,0.9,402.4],[-280.4,2.5,398.8],[-348.4,4,352.4],[-373,2.1,327.2],[-392.6,0.8,302.4],[-402.4,3.8,227.6],[-400,1.7,177.7],[-384.1,5.7,108.3],[-389,6.1,86],[-419.4,8.9,50.6],[-445.1,10.5,16],[-488.6,12.3,-69.9],[-462.9,15.2,-121.5],[-433.7,17.7,-148.2],[-389.6,17.8,-168.6],[-356.5,16.8,-174.2],[-315.1,18.9,-210.3],[-266.2,20.6,-282.7],[-252,21.6,-319.1],[-240.1,23.1,-353],[-225.9,22.4,-380.3],[-176.4,19.2,-447.2],[-134.5,16.1,-483],[-106.8,15.3,-491.8],[-70.4,14.8,-487.6],[2.7,9.6,-451.4],[55.9,7.6,-418.3],[88.3,8.4,-394.1],[125,6,-386.4],[163.3,4.1,-384],[204.3,1.1,-376],[246.2,1.1,-371.7],[318.8,2.8,-358.1],[348.4,4.9,-340.8],[367.4,1.1,-214.1],[367.9,1.8,-187],[367.3,1.3,-173.6],[367,3.4,-127.9],[369.3,5.6,-90.3],[400.1,10.6,-24.8]],
+    N: 1523, SC: 1.6, yScale: 1.3, CX: 0, CZ: 0, TW: 2352, lake: null, mountR: [880, 1160],
+    vmaxKmh: 210, accelScale: 1.5, boostKmh: 300, boostAt: [0.15, 0.4, 0.65, 0.9], cars: 48, motos: 18, trafficKmh: { left: 100, right: 120 }, bgm: 'medium' }
 };
 const TRACK = TRACKS[TRACK_ID];
 const N = TRACK.N, HALF = 10, LAPS = 2, VMAX = TRACK.vmaxKmh / 3.6, SC = TRACK.SC;
@@ -537,8 +540,8 @@ function makeCar(type) {
   root.rotation.order = 'YXZ';
   return { root, body, wheels, type, shadow: sh, half: 1, model: false };
 }
-// f60 uses the f1 primitives and gt500 the bug primitives until their .glb models load
-const CARS = { f1: makeCar('f1'), bug: makeCar('bug'), f60: makeCar('f1'), gt500: makeCar('bug') };
+// sub uses the f1 primitives and gt500 the bug primitives until their .glb models load
+const CARS = { f1: makeCar('f1'), bug: makeCar('bug'), sub: makeCar('f1'), gt500: makeCar('bug') };
 const CAR_KEYS = Object.keys(CARS);
 for (const t of CAR_KEYS) { scene.add(CARS[t].root); CARS[t].root.visible = false; }
 
@@ -560,8 +563,8 @@ function parkAll() {
 
 /* ---------------- 3D models (.glb) ---------------- */
 const FALLBACK = 1.8;
-for (const t of CAR_KEYS) { const c = CARS[t]; c.root.scale.setScalar(FALLBACK); c.wheels.forEach(w => w.r *= FALLBACK); c.half = (t === 'f1' || t === 'f60' ? 1.0 : 0.95) * FALLBACK; }
-const MODELS = { f1: { scale: 1.8 }, bug: { scale: 5.994 }, f60: { scale: 1.848 }, gt500: { scale: 1.764 } };
+for (const t of CAR_KEYS) { const c = CARS[t]; c.root.scale.setScalar(FALLBACK); c.wheels.forEach(w => w.r *= FALLBACK); c.half = (t === 'f1' || t === 'sub' ? 1.0 : 0.95) * FALLBACK; }
+const MODELS = { f1: { scale: 1.8 }, bug: { scale: 5.994 }, sub: { scale: 0.009734 }, gt500: { scale: 1.764 } };
 const WHEEL_RE = /(^|[_\s-])(tire|tyre|rim|spoke|hub|whitewall|sidewall|axle|wheel)/i, TIRE_RE = /tire|tyre/i;
 // PBR look per material role (the glb material name); paint is clear-coated, rubber and dark trim stay matte
 const CAR_STYLE = {
@@ -989,7 +992,7 @@ function onMsg(topic, payload) {
   if (m.r !== want) return;
   if (NET.partner && m.from !== NET.partner) return;
   const hostTrk = m.t === 'hello' ? m.trk : m.t === 'state' && m.d ? m.d.trk : undefined;
-  if (NET.role === 'guest' && (hostTrk === 1 || hostTrk === 2) && hostTrk !== TRACK_ID) return switchTrack(hostTrk);
+  if (NET.role === 'guest' && [1, 2, 3].includes(hostTrk) && hostTrk !== TRACK_ID) return switchTrack(hostTrk);
   if (!NET.partner) {
     if (m.t !== 'hello') return;
     NET.partner = m.from; NET.lastSeq = -1; NET.state = 'connected'; lastSent = '';
@@ -1087,7 +1090,7 @@ $('againBtn').addEventListener('click', () => {
   parkAll(); sendPresence(true); updateLobby();
 });
 $('music').addEventListener('click', () => { initAudio(); A.musicOn = !A.musicOn; $('music').textContent = A.musicOn ? '音樂 開' : '音樂 關'; });
-for (const id of [1, 2]) {
+for (const id of [1, 2, 3]) {
   const b = $('trk-' + id); b.classList.toggle('sel', id === TRACK_ID);
   b.addEventListener('click', () => { if (id !== TRACK_ID) location.href = '?track=' + id; });
 }
@@ -1106,7 +1109,7 @@ function updateLobby() {
   let msg, codeLook = false;
   $('netRow').hidden = NET.state === 'connected' || NET.state === 'hosting' || NET.state === 'opening' || NET.state === 'joining' || NET.state === 'switching';
   const trkLock = ['opening', 'hosting', 'joining', 'connected', 'switching'].includes(NET.state);
-  for (const id of [1, 2]) $('trk-' + id).disabled = trkLock;
+  for (const id of [1, 2, 3]) $('trk-' + id).disabled = trkLock;
   if (NET.state === 'idle') msg = '按「開房間」拿到房號，或輸入對方的房號';
   else if (NET.state === 'opening') msg = NET.role === 'guest' ? '連線中…' : '開房間中…';
   else if (NET.state === 'hosting') { msg = '房號 ' + NET.code + '　請對方輸入這個號碼'; codeLook = true; }
@@ -1142,7 +1145,7 @@ let minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9;
 P.forEach(p => { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z); });
 const mScale = 200 / Math.max(maxX - minX, maxZ - minZ);
 const mx = x => 120 + (x - (minX + maxX) / 2) * -mScale, mz = z => 120 + (z - (minZ + maxZ) / 2) * -mScale;
-const CAR_HEX = { f1: '#ff7a00', bug: '#1ea5ec', f60: '#e10600', gt500: '#8f969c' };
+const CAR_HEX = { f1: '#ff7a00', bug: '#1ea5ec', sub: '#1f4fa8', gt500: '#8f969c' };
 function drawMap() {
   mctx.clearRect(0, 0, 240, 240);
   mctx.lineJoin = 'round'; mctx.beginPath(); P.forEach((p, i) => i ? mctx.lineTo(mx(p.x), mz(p.z)) : mctx.moveTo(mx(p.x), mz(p.z))); mctx.closePath();
