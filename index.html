@@ -585,7 +585,7 @@ function carMaterial(src) {
 function makeCarMaterial(src) {
   const s = CAR_STYLE[src.name] || CAR_STYLE.black;
   if (src.map) src.map.encoding = THREE.LinearEncoding; // texture colours used as stored, like the rest of the scene
-  const o = { color: src.color.clone(), map: src.map || null, envMap: CAR_ENV, envMapIntensity: s.envMapIntensity || 1, metalness: s.metalness, roughness: s.roughness, transparent: !!s.transparent, opacity: s.opacity || 1 };
+  const o = { color: src.color.clone(), map: src.map || null, envMap: CAR_ENV, envMapIntensity: s.envMapIntensity || 1, metalness: s.metalness, roughness: s.roughness, transparent: !!s.transparent, opacity: s.opacity || 1, side: src.side };
   return s.clearcoat ? new THREE.MeshPhysicalMaterial(Object.assign(o, { clearcoat: s.clearcoat, clearcoatRoughness: s.clearcoatRoughness })) : new THREE.MeshStandardMaterial(o);
 }
 function applyModel(car, scn, scale) {
