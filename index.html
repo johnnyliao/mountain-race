@@ -188,6 +188,19 @@ h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:clamp(28px,6v
         </svg>
         <span class="name">紅色法拉利</span>
       </button>
+      <button class="car sticker" id="pick-gt500" type="button" data-car="gt500">
+        <span class="tag" hidden></span>
+        <svg viewBox="0 0 220 80" aria-hidden="true">
+          <path d="M26 56 L28 44 Q30 38 44 37 L70 32 Q90 14 124 14 Q150 15 162 30 L192 38 Q206 42 206 56 L204 60 L28 60 Z" fill="#8f969c" stroke="#202024" stroke-width="3" stroke-linejoin="round"/>
+          <path d="M44 40 L72 33 Q92 21 124 20 Q148 21 160 33 L192 40" fill="none" stroke="#111" stroke-width="4" stroke-linecap="round"/>
+          <path d="M44 47 L72 40 Q92 28 124 27 Q148 28 160 40 L192 46" fill="none" stroke="#111" stroke-width="4" stroke-linecap="round"/>
+          <path d="M80 38 Q96 28 124 28 Q146 28 156 38 Z" fill="#bfe9ff" stroke="#202024" stroke-width="2.5" stroke-linejoin="round"/>
+          <circle cx="200" cy="48" r="4" fill="#fff" stroke="#202024" stroke-width="2"/>
+          <circle cx="56" cy="58" r="15" fill="#222"/><circle cx="56" cy="58" r="6" fill="#c8c8c8"/>
+          <circle cx="172" cy="60" r="14" fill="#222"/><circle cx="172" cy="60" r="5" fill="#c8c8c8"/>
+        </svg>
+        <span class="name">灰色野馬 GT500</span>
+      </button>
     </div>
     <div class="row">
       <button id="readyBtn" class="big sticker" type="button" disabled>先選一台車</button>
@@ -212,6 +225,7 @@ h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:clamp(28px,6v
 <script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <script src="model-beetle.js"></script>
 <script src="model-f60.js"></script>
+<script src="model-gt500.js"></script>
 <script>
 (() => {
 'use strict';
@@ -511,8 +525,8 @@ function makeCar(type) {
   root.rotation.order = 'YXZ';
   return { root, body, wheels, type, shadow: sh, half: 1, model: false };
 }
-// f60 uses the f1 primitives until its .glb model loads
-const CARS = { f1: makeCar('f1'), bug: makeCar('bug'), f60: makeCar('f1') };
+// f60 uses the f1 primitives and gt500 the bug primitives until their .glb models load
+const CARS = { f1: makeCar('f1'), bug: makeCar('bug'), f60: makeCar('f1'), gt500: makeCar('bug') };
 const CAR_KEYS = Object.keys(CARS);
 for (const t of CAR_KEYS) { scene.add(CARS[t].root); CARS[t].root.visible = false; }
 
@@ -535,7 +549,7 @@ function parkAll() {
 /* ---------------- 3D models (.glb) ---------------- */
 const FALLBACK = 1.8;
 for (const t of CAR_KEYS) { const c = CARS[t]; c.root.scale.setScalar(FALLBACK); c.wheels.forEach(w => w.r *= FALLBACK); c.half = (t === 'f1' || t === 'f60' ? 1.0 : 0.95) * FALLBACK; }
-const MODELS = { f1: { scale: 1.8 }, bug: { scale: 5.994 }, f60: { scale: 1.848 } };
+const MODELS = { f1: { scale: 1.8 }, bug: { scale: 5.994 }, f60: { scale: 1.848 }, gt500: { scale: 1.764 } };
 const WHEEL_RE = /(^|[_\s-])(tire|tyre|rim|spoke|hub|whitewall|sidewall|axle|wheel)/i, TIRE_RE = /tire|tyre/i;
 function mergeParts(list) {
   let n = 0; list.forEach(p => n += p.g.attributes.position.count);
@@ -1109,7 +1123,7 @@ let minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9;
 P.forEach(p => { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z); });
 const mScale = 200 / Math.max(maxX - minX, maxZ - minZ);
 const mx = x => 120 + (x - (minX + maxX) / 2) * -mScale, mz = z => 120 + (z - (minZ + maxZ) / 2) * -mScale;
-const CAR_HEX = { f1: '#ff7a00', bug: '#1ea5ec', f60: '#e10600' };
+const CAR_HEX = { f1: '#ff7a00', bug: '#1ea5ec', f60: '#e10600', gt500: '#8f969c' };
 function drawMap() {
   mctx.clearRect(0, 0, 240, 240);
   mctx.lineJoin = 'round'; mctx.beginPath(); P.forEach((p, i) => i ? mctx.lineTo(mx(p.x), mz(p.z)) : mctx.moveTo(mx(p.x), mz(p.z))); mctx.closePath();
