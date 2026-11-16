@@ -62,6 +62,7 @@ button:focus-visible{outline:3px solid var(--papaya);outline-offset:3px}
 #gas{width:136px;height:136px;right:calc(26px + env(safe-area-inset-right,0px));bottom:calc(26px + env(safe-area-inset-bottom,0px));background:#4fd36a;font-size:28px}
 #brake{width:76px;height:76px;right:calc(178px + env(safe-area-inset-right,0px));bottom:calc(22px + env(safe-area-inset-bottom,0px));background:#ff6b6b;font-size:19px}
 #hornBtn{width:66px;height:66px;right:calc(172px + env(safe-area-inset-right,0px));bottom:calc(116px + env(safe-area-inset-bottom,0px));background:#ffd43b;font-size:17px}
+#driftBtn{width:70px;height:70px;right:calc(59px + env(safe-area-inset-right,0px));bottom:calc(170px + env(safe-area-inset-bottom,0px));background:#9b5de5;color:#fff;font-size:17px}
 
 /* lobby + result */
 .overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:calc(10px + env(safe-area-inset-top,0px)) calc(16px + env(safe-area-inset-right,0px)) calc(10px + env(safe-area-inset-bottom,0px)) calc(16px + env(safe-area-inset-left,0px));background:linear-gradient(180deg,rgba(95,179,238,.15),rgba(11,42,91,.35))}
@@ -100,6 +101,7 @@ h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:clamp(28px,6v
   #speed b{font-size:36px} #gas{width:118px;height:118px;font-size:24px}
   #brake{right:calc(156px + env(safe-area-inset-right,0px))} #hornBtn{right:calc(150px + env(safe-area-inset-right,0px));bottom:calc(104px + env(safe-area-inset-bottom,0px))}
   #minimap{width:96px;height:96px} #music{right:calc(124px + env(safe-area-inset-right,0px))}
+  #driftBtn{right:calc(50px + env(safe-area-inset-right,0px));bottom:calc(152px + env(safe-area-inset-bottom,0px))}
   .car svg{max-height:18vh} #count{font-size:96px}
 }
 @media (prefers-reduced-motion:reduce){#count.pop,#rotate .phone{animation:none}}
@@ -123,6 +125,7 @@ h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:clamp(28px,6v
 <div id="controls" hidden>
   <div id="steerZone"><div id="stick"><span class="arrow l">◀</span><span class="arrow r">▶</span><div id="knob"></div></div></div>
   <div id="hornBtn" class="pad">叭叭</div>
+  <div id="driftBtn" class="pad">甩尾</div>
   <div id="brake" class="pad">煞車</div>
   <div id="gas" class="pad">油門</div>
 </div>
@@ -817,6 +820,7 @@ function initAudio() {
   const bo = ctx.createOscillator(); bo.type = 'sine'; bo.frequency.value = 1950; const bog = ctx.createGain(); bog.gain.value = 0.25;
   A.bg = ctx.createGain(); A.bg.gain.value = 0;
   bs.connect(bf); bf.connect(A.bg); bo.connect(bog); bog.connect(A.bg); A.bg.connect(A.master); bs.start(); bo.start();
+  A.bf = bf; A.bo = bo;
   // music bus
   A.mg = ctx.createGain(); A.mg.gain.value = 0.13; A.mg.connect(A.master);
   const s = ctx.createBufferSource(); s.buffer = ctx.createBuffer(1, 1, 22050); s.connect(ctx.destination); s.start(0);
@@ -883,11 +887,14 @@ function updateEngineAudio(on, gas, braking) {
   A.eo1.frequency.setTargetAtTime(f, t, 0.06); A.eo2.frequency.setTargetAtTime(f / 2, t, 0.06);
   A.ef.frequency.setTargetAtTime(280 + s * 1300 + (gas ? 450 : 0), t, 0.08);
   A.eg.gain.setTargetAtTime(on ? 0.05 + s * 0.05 + (gas ? 0.04 : 0) : 0, t, 0.12);
-  A.bg.gain.setTargetAtTime(on && braking && Math.abs(me.v) > 4 ? 0.07 + s * 0.08 : 0, t, 0.05);
+  // drift squeal: same noise path as the brake, quieter and a bit higher in pitch
+  const dr = on && DRIFT.on;
+  A.bf.frequency.setTargetAtTime(dr ? 3050 : 2700, t, 0.05); A.bo.frequency.setTargetAtTime(dr ? 2200 : 1950, t, 0.05);
+  A.bg.gain.setTargetAtTime(on && braking && Math.abs(me.v) > 4 ? 0.07 + s * 0.08 : dr ? 0.045 : 0, t, 0.05);
 }
 
 /* ---------------- input ---------------- */
-const input = { steer: 0, gas: false, brake: false };
+const input = { steer: 0, gas: false, brake: false, drift: false };
 const keys = {};
 addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; if (e.key.toLowerCase() === 'h') honk(); });
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
@@ -896,10 +903,11 @@ function holdPad(el, on, off) {
   const up = () => { el.classList.remove('on'); off && off(); };
   el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up); el.addEventListener('lostpointercapture', up);
 }
-let padGas = false, padBrake = false;
+let padGas = false, padBrake = false, padDrift = false;
 holdPad($('gas'), () => padGas = true, () => padGas = false);
 holdPad($('brake'), () => padBrake = true, () => padBrake = false);
 holdPad($('hornBtn'), () => honk());
+holdPad($('driftBtn'), () => padDrift = true, () => padDrift = false);
 let stickId = null, stickX0 = 0, padSteer = 0;
 const zone = $('steerZone'), stick = $('stick'), knob = $('knob');
 function placeStick(x, y) { const r = zone.getBoundingClientRect(); stick.style.left = (x - r.left) + 'px'; stick.style.top = (y - r.top) + 'px'; stick.style.bottom = 'auto'; }
@@ -916,6 +924,7 @@ function readInput() {
   input.steer = k !== 0 ? k : padSteer;
   input.gas = padGas || keys['arrowup'] || keys['w'] || keys[' '];
   input.brake = padBrake || keys['arrowdown'] || keys['s'];
+  input.drift = padDrift || !!keys['shift'];
 }
 
 /* ---------------- network (public MQTT relay, 4-digit code) ---------------- */
@@ -1012,7 +1021,7 @@ function sendPresence(force) {
   if (!NET.partner) return; const now = performance.now();
   if (!force && now - lastSentT < 90) return;
   const st = G.phase === 'race' || G.phase === 'done' || G.phase === 'count'
-    ? [+me.x.toFixed(2), +me.y.toFixed(2), +me.z.toFixed(2), +me.h.toFixed(3), +me.v.toFixed(2), +me.pitch.toFixed(3), +input.steer.toFixed(2)] : null;
+    ? [+me.x.toFixed(2), +me.y.toFixed(2), +me.z.toFixed(2), +me.h.toFixed(3), +me.v.toFixed(2), +me.pitch.toFixed(3), +input.steer.toFixed(2), +DRIFT.vis.toFixed(3)] : null;
   const o = { pick: G.pick, ready: G.ready, phase: G.phase, st, lap: G.lap, idx: me.idx, horn: G.hornN, fin: G.fin, bx: BOOST_EATS.slice(), trk: TRACK_ID };
   const s = JSON.stringify(o);
   if (!force && s === lastSent && now - lastSentT < 1000) return;
@@ -1023,7 +1032,7 @@ function sendPresence(force) {
 /* ---------------- game state ---------------- */
 const G = { phase: 'lobby', pick: null, ready: false, solo: false, goAt: 0, countAt: 0, lap: 0, fin: null, hornN: 0, lastCount: -1 };
 const me = { x: 0, y: 0, z: 0, h: 0, v: 0, idx: 0, pitch: 0 };
-const opp = { car: null, x: 0, y: 0, z: 0, h: 0, v: 0, pitch: 0, steer: 0, seen: false, horn: null };
+const opp = { car: null, x: 0, y: 0, z: 0, h: 0, v: 0, pitch: 0, steer: 0, dv: 0, seen: false, horn: null };
 
 function honk() {
   const t = performance.now(); if (t - lastHorn < 700) return; lastHorn = t;
@@ -1040,7 +1049,7 @@ for (const t of CAR_KEYS) cards[t].addEventListener('click', () => {
 $('readyBtn').addEventListener('click', () => { initAudio(); if (!G.pick) return; G.ready = !G.ready; sendPresence(true); updateLobby(); });
 $('soloBtn').addEventListener('click', () => { initAudio(); if (!G.pick) return; G.ready = true; startCountdown(true); });
 $('againBtn').addEventListener('click', () => {
-  G.phase = 'lobby'; G.ready = false; G.fin = null; G.lap = 0; G.solo = false; boostUntil = 0; MO.forEach(m => m.hitAt = null);
+  G.phase = 'lobby'; G.ready = false; G.fin = null; G.lap = 0; G.solo = false; boostUntil = 0; resetDrift(); MO.forEach(m => m.hitAt = null);
   $('result').hidden = true; $('lobby').hidden = false; $('hud').hidden = true; $('controls').hidden = true;
   parkAll(); sendPresence(true); updateLobby();
 });
@@ -1084,7 +1093,7 @@ function updateLobby() {
 }
 
 function startCountdown(solo) {
-  G.solo = solo; G.phase = 'count'; G.countAt = performance.now(); G.lastCount = -1; G.lap = 0; G.fin = null; boostUntil = 0; BOOSTS.forEach(b => b.hideUntil = 0); MO.forEach(m => m.hitAt = null);
+  G.solo = solo; G.phase = 'count'; G.countAt = performance.now(); G.lastCount = -1; G.lap = 0; G.fin = null; boostUntil = 0; resetDrift(); BOOSTS.forEach(b => b.hideUntil = 0); MO.forEach(m => m.hitAt = null);
   const g = gridSpot(gridLat()); Object.assign(me, { x: g.x, y: g.y, z: g.z, h: g.h, v: 0, idx: g.idx, pitch: 0 });
   $('lobby').hidden = true; $('hud').hidden = false; $('controls').hidden = false; $('result').hidden = true;
   $('rank').hidden = solo; camInit = true; resetStick();
@@ -1132,10 +1141,17 @@ for (const t of CAR_KEYS) for (let k = 0; k < 2; k++) {
   const f = new THREE.Mesh(new THREE.ConeGeometry(0.42, 1, 10, 1, true).translate(0, 0.5, 0), new THREE.MeshBasicMaterial({ color: 0xffc93c, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
   f.rotation.x = -Math.PI / 2; f.visible = false; CARS[t].root.add(f); FLAMES[t].push(f);
 }
+// round soft sprite for all Points (square points looked like hard blocks)
+function dotTexture() {
+  const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d');
+  const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.45, 'rgba(255,255,255,0.8)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c);
+}
+const DOT_TEX = dotTexture();
 const SP = { pos: new Float32Array(SPARK_N * 3), col: new Float32Array(SPARK_N * 3), vel: new Float32Array(SPARK_N * 3), life: new Float32Array(SPARK_N), max: new Float32Array(SPARK_N) };
 const spGeo = new THREE.BufferGeometry();
 spGeo.setAttribute('position', new THREE.BufferAttribute(SP.pos, 3)); spGeo.setAttribute('color', new THREE.BufferAttribute(SP.col, 3));
-const sparks = new THREE.Points(spGeo, new THREE.PointsMaterial({ size: 0.45, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+const sparks = new THREE.Points(spGeo, new THREE.PointsMaterial({ size: 0.45, map: DOT_TEX, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
 sparks.frustumCulled = false; sparks.visible = false; scene.add(sparks);
 // rear exhaust point in car-root units (glb models use root scale 1, fallback box uses 1.8)
 function rearSpot(car) {
@@ -1202,6 +1218,108 @@ function updateBoostFx(dt) {
   FX.shake.set((Math.random() - 0.5) * 0.16 * lv, (Math.random() - 0.5) * 0.16 * lv, (Math.random() - 0.5) * 0.16 * lv);
 }
 
+/* ---------------- drift + mini-turbo: hold 甩尾 while steering; charge 0.8 s blue, 1.8 s orange; release for a turbo ---------------- */
+const DRIFT = { on: false, dir: 0, t: 0, lvl: 0, bad: 0, hop: 1, vis: 0, turbo: 0, rear: null, lock: false };
+const DRIFT_HOP = 0.15, DRIFT_DEG = 22 * Math.PI / 180, TURBO_V = VMAX * 1.15;
+let driftSmokeAcc = 0, driftSparkAcc = 0;
+const driftV = new THREE.Vector3();
+function makeParticles(n, size, blending, bg, g) {
+  const P = { n, i: 0, g, bg, pos: new Float32Array(n * 3), col: new Float32Array(n * 3), base: new Float32Array(n * 3), vel: new Float32Array(n * 3), life: new Float32Array(n), max: new Float32Array(n) };
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(P.pos, 3)); geo.setAttribute('color', new THREE.BufferAttribute(P.col, 3));
+  P.obj = new THREE.Points(geo, new THREE.PointsMaterial({ size, map: DOT_TEX, opacity: blending === THREE.NormalBlending ? 0.75 : 1, vertexColors: true, transparent: true, blending, depthWrite: false }));
+  P.obj.frustumCulled = false; P.obj.visible = false; scene.add(P.obj);
+  return P;
+}
+const DSMOKE = makeParticles(90, 0.5, THREE.NormalBlending, [0.373, 0.702, 0.933], -0.6); // grey puffs fade into the sky colour
+const DSPARK = makeParticles(80, 0.3, THREE.AdditiveBlending, [0, 0, 0], 9.8);
+function emitParticle(P, x, y, z, vx, vy, vz, life, r, g, b) {
+  const i = P.i, j = i * 3; P.i = (i + 1) % P.n;
+  P.pos.set([x, y, z], j); P.vel.set([vx, vy, vz], j); P.life[i] = P.max[i] = life; P.base.set([r, g, b], j);
+}
+function stepParticles(P, dt) {
+  let alive = false;
+  for (let i = 0; i < P.n; i++) {
+    const j = i * 3;
+    if (P.life[i] > 0) {
+      alive = true; P.life[i] -= dt; P.vel[j + 1] -= P.g * dt;
+      for (let k = 0; k < 3; k++) P.pos[j + k] += P.vel[j + k] * dt;
+      const w = Math.max(0, P.life[i]) / P.max[i];
+      for (let k = 0; k < 3; k++) P.col[j + k] = P.base[j + k] * w + P.bg[k] * (1 - w);
+    } else {
+      P.pos[j + 1] = -999; for (let k = 0; k < 3; k++) P.col[j + k] = P.bg[k];
+    }
+  }
+  P.obj.visible = alive;
+  P.obj.geometry.attributes.position.needsUpdate = true; P.obj.geometry.attributes.color.needsUpdate = true;
+}
+function ding(f) { if (A.ctx) tone(f, A.ctx.currentTime, 0.25, 'sine', 0.22, A.master); }
+function whoosh() {
+  if (!A.ctx) return; const ctx = A.ctx, t = ctx.currentTime, s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+  s.buffer = A.noise; f.type = 'bandpass'; f.Q.value = 1.2; f.frequency.setValueAtTime(400, t); f.frequency.exponentialRampToValueAtTime(2600, t + 0.6);
+  s.connect(f); f.connect(g); g.connect(A.mg);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.35, t + 0.1); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+  s.start(t, Math.random() * 0.5); s.stop(t + 0.72);
+}
+function resetDrift() {
+  Object.assign(DRIFT, { on: false, dir: 0, t: 0, lvl: 0, bad: 0, hop: 1, vis: 0, turbo: 0, lock: false });
+  for (const P of [DSMOKE, DSPARK]) { P.life.fill(0); P.obj.visible = false; }
+}
+function endDrift() {
+  const lvl = DRIFT.lvl; DRIFT.on = false; DRIFT.lock = true; // any end needs a fresh press before a new drift
+  if (lvl > 0 && performance.now() >= boostUntil) { DRIFT.turbo = lvl === 2 ? 1.3 : 0.7; DRIFT.rear = rearSpot(CARS[G.pick]); whoosh(); }
+}
+// called from physics() every race frame; start, charge, release, and the visual hop / yaw offset
+function updateDrift(dt, racing, steer) {
+  if (!racing) { resetDrift(); return; }
+  if (!input.drift) DRIFT.lock = false;
+  if (!DRIFT.on) {
+    if (input.drift && !DRIFT.lock && Math.abs(steer) > 0.25 && Math.abs(me.v) > 35 / 3.6)
+      Object.assign(DRIFT, { on: true, dir: Math.sign(steer), t: 0, lvl: 0, bad: 0, hop: 0 });
+  } else {
+    DRIFT.t += dt;
+    const lvl = DRIFT.t >= 1.8 ? 2 : DRIFT.t >= 0.8 ? 1 : 0;
+    if (lvl > DRIFT.lvl) { DRIFT.lvl = lvl; ding(lvl === 2 ? 1320 : 880); }
+    DRIFT.bad = steer * DRIFT.dir < -0.5 ? DRIFT.bad + dt : 0;
+    if (!input.drift || Math.abs(me.v) < 25 / 3.6 || DRIFT.bad > 0.3) endDrift();
+  }
+  if (DRIFT.hop < DRIFT_HOP) DRIFT.hop += dt;
+  DRIFT.vis += ((DRIFT.on ? DRIFT.dir * DRIFT_DEG : 0) - DRIFT.vis) * (1 - Math.exp(-dt / 0.05));
+  if (DRIFT.turbo > 0) DRIFT.turbo -= dt;
+}
+// mini-turbo flames: reuse the exhaust cones at 60% size (big boost flames keep priority)
+function updateTurboFx() {
+  if (!(DRIFT.turbo > 0) || performance.now() < boostUntil) return;
+  const fl = FLAMES[G.pick], s = DRIFT.rear;
+  fl[0].position.set(-s.x, s.y, s.z); fl[1].position.set(s.x, s.y, s.z);
+  for (const f of fl) {
+    const w = 0.6 * (1 + Math.random() * 0.35);
+    f.visible = true; f.scale.set(w, 0.6 * (2.4 + Math.random() * 1.6), w); f.material.opacity = 0.75 + Math.random() * 0.25;
+  }
+}
+// smoke puffs and charge-coloured sparks at the rear wheels (the last two wheel entries are always the rear pair)
+function updateDriftFx(dt, car) {
+  if (DRIFT.on) {
+    car.root.updateMatrixWorld(true);
+    const fx = Math.sin(me.h), fz = Math.cos(me.h);
+    const c = DRIFT.lvl === 2 ? [1, 0.55, 0.1] : DRIFT.lvl === 1 ? [0.3, 0.75, 1] : [1, 0.92, 0.5];
+    const rear = () => car.wheels[car.wheels.length - 1 - (Math.random() < 0.5 ? 0 : 1)].steer.getWorldPosition(driftV);
+    driftSmokeAcc += dt * 60;
+    while (driftSmokeAcc >= 1) {
+      driftSmokeAcc -= 1; rear();
+      emitParticle(DSMOKE, driftV.x + (Math.random() - 0.5) * 0.4, driftV.y + 0.1, driftV.z + (Math.random() - 0.5) * 0.4,
+        -fx * 2 + (Math.random() - 0.5) * 1.5, 0.8 + Math.random() * 1.2, -fz * 2 + (Math.random() - 0.5) * 1.5, 0.5 + Math.random() * 0.5, 0.75, 0.75, 0.78);
+    }
+    driftSparkAcc += dt * 50;
+    while (driftSparkAcc >= 1) {
+      driftSparkAcc -= 1; rear();
+      emitParticle(DSPARK, driftV.x, driftV.y, driftV.z,
+        -fx * 3 + (Math.random() - 0.5) * 6, 2 + Math.random() * 3, -fz * 3 + (Math.random() - 0.5) * 6, 0.25 + Math.random() * 0.25, ...c);
+    }
+  }
+  stepParticles(DSMOKE, dt); stepParticles(DSPARK, dt);
+}
+
 /* ---------------- loop ---------------- */
 let last = performance.now(), camInit = true, orbit = 0;
 const camPos = new THREE.Vector3(), camLook = new THREE.Vector3(), tmp = new THREE.Vector3();
@@ -1211,19 +1329,24 @@ function physics(dt) {
   const finished = G.phase === 'done';
   let gas = racing && input.gas, brake = racing && input.brake, steer = racing || finished ? input.steer : 0;
   if (finished) { gas = false; brake = me.v > 6; }
+  updateDrift(dt, racing, steer);
   if (racing && performance.now() < boostUntil) me.v = Math.min(BOOST_V, me.v + 30 * TRACK.accelScale * dt);
+  else if (racing && DRIFT.turbo > 0 && !brake) me.v = Math.min(TURBO_V, me.v + 18 * TRACK.accelScale * dt);
   else {
     if (brake && !gas) { me.v -= (me.v > 0 ? 22 : 4) * dt; if (me.v < -5) me.v = -5; }
     else if (me.v > VMAX) me.v = Math.max(VMAX, me.v - 15 * dt);
     else if (gas) me.v = Math.min(VMAX, me.v + 11 * TRACK.accelScale * (1 - 0.85 * me.v / VMAX) * dt);
     else { me.v -= Math.sign(me.v) * Math.min(Math.abs(me.v), 2.6 * dt); }
   }
+  if (DRIFT.on) me.v -= Math.sign(me.v) * 2 * dt; // drifting scrubs a little extra speed (gas still works)
   const n = nearestIdx(me.x, me.z, me.idx, 18); const i = n.i;
   const ht = yawAt(i), off = angDiff(ht, me.h);
   const sp = Math.abs(me.v);
   const yawRate = (1.15 - 0.45 * sp / VMAX) * Math.min(1, sp / 4) * Math.sign(me.v || 1);
-  me.h -= steer * yawRate * dt;
-  if (Math.abs(steer) < 0.15 && sp > 2 && Math.abs(off) < 1.0 && me.v > 0) me.h += off * 0.9 * dt; // gentle auto-steer
+  // drift: yaw toward the locked direction, stronger when steering the same way, never below 0.6x
+  if (DRIFT.on) me.h -= DRIFT.dir * yawRate * Math.max(0.6, 1 + 0.5 * steer * DRIFT.dir) * dt;
+  else me.h -= steer * yawRate * dt;
+  if (!DRIFT.on && Math.abs(steer) < 0.15 && sp > 2 && Math.abs(off) < 1.0 && me.v > 0) me.h += off * 0.9 * dt; // gentle auto-steer
   me.x += Math.sin(me.h) * me.v * dt; me.z += Math.cos(me.h) * me.v * dt;
   hitTraffic();
   hitMotos();
@@ -1276,6 +1399,7 @@ function readOpp(dt) {
     const k = Math.min(1, 10 * dt);
     opp.x += (st[0] - opp.x) * k; opp.y += (st[1] - opp.y) * k; opp.z += (st[2] - opp.z) * k;
     opp.h += angDiff(st[3], opp.h) * k; opp.v = st[4]; opp.pitch = st[5] || 0; opp.steer = st[6] || 0;
+    opp.dv += ((st[7] || 0) - opp.dv) * k; // drift visual yaw offset (absent from older clients = 0)
     opp.lap = p.lap; opp.idx = p.idx; opp.fin = p.fin;
   }
   if (p && typeof p.horn === 'number') {
@@ -1384,17 +1508,20 @@ function frame(now) {
   updateMotos((now - G.countAt) / 1000, dt);
   updateBoosts(now / 1000, dt);
   const ctl = physics(dt);
+  updateTurboFx();
   updateEngineAudio(true, ctl.gas, ctl.brake);
 
-  // pose cars
+  // pose cars (drift: visual-only yaw into the turn and a 0.3 m hop at the start; the camera still follows me.h)
   const mine = CARS[G.pick], other = opp.seen && !G.solo ? CARS[opp.car] : null;
-  poseCar(mine, me.x, me.y, me.z, me.h, me.pitch, -ctl.steer * 0.45, me.v * dt);
+  const hopY = DRIFT.hop < DRIFT_HOP ? 0.3 * Math.sin(Math.PI * DRIFT.hop / DRIFT_HOP) : 0;
+  poseCar(mine, me.x, me.y + hopY, me.z, me.h - DRIFT.vis, me.pitch, -ctl.steer * 0.45, me.v * dt);
+  updateDriftFx(dt, mine);
   // only my car and the opponent's car are shown; every other car root is hidden
   for (const t of CAR_KEYS) {
     const c = CARS[t];
     if (c === mine) continue;
     c.root.visible = c === other;
-    if (c === other) poseCar(c, opp.x, opp.y, opp.z, opp.h, opp.pitch, -opp.steer * 0.45, opp.v * dt);
+    if (c === other) poseCar(c, opp.x, opp.y, opp.z, opp.h - opp.dv, opp.pitch, -opp.steer * 0.45, opp.v * dt);
   }
 
   // camera
