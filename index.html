@@ -1156,8 +1156,8 @@ function aiObstacles(tt) {
   ob.push({ d: aheadD(D[j]), lat: (me.x - P[j].x) * L[j].x + (me.z - P[j].z) * L[j].z, v: Math.max(0, me.v), reach: 12 });
   return ob;
 }
-function startAI(level, f = 1) { // f: speed factor (story retries slow the computer down); multiplies vmax and corner speed
-  const others = CAR_KEYS.filter(t => t !== G.pick), i = N - 14, a = trackAt(D[i]);
+function startAI(level, f = 1, avoid = null) { // f: speed factor (story retries slow the computer down); avoid: car not to repeat
+  const all = CAR_KEYS.filter(t => t !== G.pick), pool = all.filter(t => t !== avoid), others = pool.length ? pool : all, i = N - 14, a = trackAt(D[i]);
   Object.assign(AI, { on: true, level, f, car: others[Math.floor(Math.random() * others.length)], s: D[i], lat: -5, latT: -5, v: 0, h: a.h, pitch: a.pitch, steer: 0,
     x: a.x - L[i].x * 5, y: a.y, z: a.z - L[i].z * 5, lap: 0, idx: i, fin: null, boostUntil: 0, presence: null });
   AI.bx.fill(0);
@@ -1793,7 +1793,7 @@ let storyCh = 0, storyLosses = 0, dlgLines = null, dlgI = 0, dlgDone = null;
 function storyLoad() {
   try {
     const s = JSON.parse(localStorage.getItem(STORY_KEY));
-    if (s && typeof s === 'object') return { unlocked: [1, 2, 3].includes(s.unlocked) ? s.unlocked : 1, cleared: s.cleared === true, introSeen: s.introSeen === true };
+    if (s && typeof s === 'object') return { unlocked: [1, 2, 3].includes(s.unlocked) ? s.unlocked : 1, cleared: s.cleared === true, introSeen: s.introSeen === true, lastCar: CAR_KEYS.includes(s.lastCar) ? s.lastCar : null };
   } catch (_) {}
   return { unlocked: 1, cleared: false, introSeen: false };
 }
@@ -1847,7 +1847,7 @@ function storyFinish(win) { // DBG test hook: end the race as if it was won or l
 $('modeStory').addEventListener('click', () => { initAudio(); openStoryMenu(); });
 $('storyBackBtn').addEventListener('click', () => { $('storyMenu').hidden = true; $('menu').hidden = false; });
 for (const ch of [1, 2, 3]) $('stc-' + ch).addEventListener('click', () => { location.href = storyUrl(ch); });
-$('storyGoBtn').addEventListener('click', () => { initAudio(); if (!G.pick) return; G.ready = true; startAI(STORY.ch[storyCh].level, storyFactor()); });
+$('storyGoBtn').addEventListener('click', () => { initAudio(); if (!G.pick) return; G.ready = true; const p = storyLoad(); startAI(STORY.ch[storyCh].level, storyFactor(), p.lastCar); p.lastCar = AI.car; storySave(p); });
 $('storyLobBtn').addEventListener('click', () => { initAudio(); backToMenu(); openStoryMenu(); });
 $('storyNextBtn').addEventListener('click', () => { location.href = storyUrl(storyCh + 1); });
 $('storyRetryBtn').addEventListener('click', () => { storyLosses++; $('againBtn').click(); });
