@@ -205,6 +205,7 @@ h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:clamp(28px,6v
     <div class="row">
       <button id="readyBtn" class="big sticker" type="button" disabled>先選一台車</button>
       <button id="soloBtn" class="alt sticker" type="button" disabled>自己先開</button>
+      <button id="aiBtn" class="alt sticker" type="button" disabled>跟電腦比</button>
     </div>
   </div>
 </div>
@@ -969,6 +970,7 @@ const TOPIC = 'sunny-mtn-race/v1/';
 const NET = { clients: [], role: null, code: null, me: Math.random().toString(36).slice(2, 10), partner: null, opp: null,
   lastRecv: 0, state: 'idle', err: '', seq: 0, lastSeq: -1, timers: [] };
 function getOpp() {
+  if (AI.on && G.phase !== 'lobby') return { peer: 'ai', presence: AI.presence };
   if (!NET.partner || !NET.opp || performance.now() - NET.lastRecv > 6000) return null;
   return { peer: NET.role === 'host' ? 'b' : 'a', presence: NET.opp };
 }
@@ -1070,6 +1072,90 @@ const G = { phase: 'lobby', pick: null, ready: false, solo: false, goAt: 0, coun
 const me = { x: 0, y: 0, z: 0, h: 0, v: 0, idx: 0, pitch: 0 };
 const opp = { car: null, x: 0, y: 0, z: 0, h: 0, v: 0, pitch: 0, steer: 0, dv: 0, seen: false, horn: null };
 
+/* ---------------- computer opponent: on rails (position = trackAt(s) + lateral offset); its presence has the net opponent's format ---------------- */
+const AI_LEVELS = { easy: { vmax: 0.80, corner: 0.85, band: 1.0 }, normal: { vmax: 0.90, corner: 0.95, band: 0.6 }, hard: { vmax: 0.98, corner: 1.05, band: 0.3 } };
+const AI_ALAT = 18; // m/s², lateral limit that sets the corner speed: sqrt(AI_ALAT / curvature)
+const DBG = new URLSearchParams(location.search).get('debug') === '1'; // debug=1 only: test hook and AI.noBand
+const AI = { on: false, level: 'normal', car: null, s: 0, lat: -5, latT: -5, v: 0, h: 0, x: 0, y: 0, z: 0, pitch: 0, steer: 0,
+  lap: 0, idx: 0, fin: null, bx: new Array(BOOST_EATS.length).fill(0), boostUntil: 0, presence: null, noBand: false };
+const wrapS = s => ((s % TRACK_LEN) + TRACK_LEN) % TRACK_LEN;
+const aheadD = s => { const d = wrapS(s - AI.s); return d > TRACK_LEN / 2 ? d - TRACK_LEN : d; }; // signed distance from the AI, ahead > 0
+// road speed limit at distance s along the track (curvature from the heading change over 16 m)
+function aiRoadV(s) {
+  const a = trackAt(s - 8), b = trackAt(s + 8), k = Math.abs(angDiff(b.h, a.h)) / 16;
+  return k > 1e-4 ? Math.sqrt(AI_ALAT / k) : Infinity;
+}
+// traffic, motos still on the road and the player as {d: distance ahead, lat, v, reach}; all cars drive forward
+function aiObstacles(tt) {
+  const ob = [];
+  for (const c of TR) ob.push({ d: aheadD(c.s0 * TRACK_LEN + c.v * tt), lat: c.lane, v: c.v, reach: 40 });
+  for (const m of MO) {
+    if (m.hitAt !== null && performance.now() - m.hitAt < MO_BACK_S * 1000) continue; // flying or hidden
+    ob.push({ d: aheadD(m.s0 * TRACK_LEN + m.v * tt), lat: m.lane, v: m.v, reach: 40 });
+  }
+  const j = me.idx;
+  ob.push({ d: aheadD(D[j]), lat: (me.x - P[j].x) * L[j].x + (me.z - P[j].z) * L[j].z, v: Math.max(0, me.v), reach: 12 });
+  return ob;
+}
+function startAI(level) {
+  const others = CAR_KEYS.filter(t => t !== G.pick), i = N - 14, a = trackAt(D[i]);
+  Object.assign(AI, { on: true, level, car: others[Math.floor(Math.random() * others.length)], s: D[i], lat: -5, latT: -5, v: 0, h: a.h, pitch: a.pitch, steer: 0,
+    x: a.x - L[i].x * 5, y: a.y, z: a.z - L[i].z * 5, lap: 0, idx: i, fin: null, boostUntil: 0, presence: null });
+  AI.bx.fill(0);
+  startCountdown(false);
+}
+function updateAI(now, dt) {
+  const lv = AI_LEVELS[AI.level], tt = (now - G.countAt) / 1000;
+  const racing = G.phase !== 'count', go = racing && now - G.goAt >= 400, boosted = now < AI.boostUntil;
+  // boost pickup: same geometry as the player (within 4 m, within 4 m in height); the boost hides for 5 s
+  if (racing && AI.fin == null) BOOSTS.forEach((b, k) => {
+    if (now >= b.hideUntil && Math.hypot(AI.x - b.x, AI.z - b.z) < 4 && Math.abs(AI.y - b.y) < 4) {
+      b.hideUntil = now + 5000; AI.boostUntil = now + 3000; AI.bx[k]++;
+    }
+  });
+  // lateral: a car in the lane ahead (0–40 m, the player 0–12 m) means moving to the side opposite it when that side is clear
+  const ob = aiObstacles(tt);
+  let blk = null;
+  for (const o of ob) if (o.d > 0 && o.d < o.reach && Math.abs(o.lat - AI.lat) < 3.5 && (!blk || o.d < blk.d)) blk = o;
+  const laneFree = lat => !ob.some(o => Math.abs(o.lat - lat) < 3.5 && o.d > -8 && o.d < 40);
+  if (blk) { const alt = blk.lat >= 0 ? -4.6 : 4.6; if (laneFree(alt)) AI.latT = alt; }
+  else if (AI.level === 'hard') { // hard: take a boost lane when a boost is within 80 m ahead and that lane is clear
+    let best = null;
+    BOOSTS.forEach((b, k) => {
+      const d = aheadD(TRACK.boostAt[k >> 1] * TRACK_LEN);
+      if (now < b.hideUntil || d <= 0 || d > 80 || (best && best.d < d)) return;
+      best = { d, lat: BOOST_LANES[k & 1] };
+    });
+    if (best && laneFree(best.lat)) AI.latT = best.lat;
+  }
+  // rubber band: further ahead of the player means slower, further behind means faster (AI.noBand turns it off in debug)
+  const gap = (AI.lap * TRACK_LEN + D[AI.idx]) - (G.lap * TRACK_LEN + D[me.idx]), band = DBG && AI.noBand ? 0 : lv.band;
+  const bm = gap > 60 ? 1 - Math.min(0.25, 0.12 * band * (1 + (gap - 60) / 60)) : gap < -60 ? 1 + Math.min(0.25, 0.10 * band * (1 + (-gap - 60) / 60)) : 1;
+  // target speed: level speed x rubber band, road ahead (brake 22 m/s² to each corner speed), blocking car, finished
+  let vt = Math.min(VMAX * lv.vmax * bm, BOOST_V);
+  for (let d = 0; d <= 90; d += 6) { const c = aiRoadV(AI.s + d) * lv.corner; vt = Math.min(vt, Math.sqrt(c * c + 44 * d)); }
+  if (boosted) vt = BOOST_V;
+  if (blk) vt = Math.min(vt, Math.sqrt(blk.v * blk.v + 44 * Math.max(0, blk.d - 9)));
+  if (AI.fin != null) vt = Math.min(vt, 40 / 3.6);
+  if (!go) vt = 0; // count-down and 0.4 s reaction
+  if (AI.v < vt) AI.v = Math.min(vt, AI.v + (boosted ? 30 * TRACK.accelScale : 11 * TRACK.accelScale * (1 - 0.85 * AI.v / VMAX)) * dt);
+  else AI.v = Math.max(vt, AI.v - 22 * dt);
+  // move along the track, lateral toward latT at most 3 m/s, kept 2 m inside the road edge
+  AI.s += AI.v * dt;
+  const a = trackAt(AI.s), lat0 = AI.lat;
+  AI.lat = clamp(AI.lat + clamp(AI.latT - AI.lat, -3 * dt, 3 * dt), -(HALF - 2), HALF - 2);
+  // heading = road heading + angle of the lateral motion; steer = turn rate on the player's scale (1.15 rad/s = full lock)
+  const latV = dt > 0 ? (AI.lat - lat0) / dt : 0, h = a.h + Math.atan2(latV, Math.max(AI.v, 4));
+  AI.steer = dt > 0 ? clamp(-angDiff(h, AI.h) / dt / 1.15, -1, 1) : 0;
+  Object.assign(AI, { h, x: a.x + L[a.i].x * AI.lat, y: a.y, z: a.z + L[a.i].z * AI.lat, pitch: a.pitch });
+  // laps and finish: same rule as the player
+  const prev = AI.idx; AI.idx = a.i;
+  if (prev > N * 0.75 && a.i < N * 0.25) AI.lap++;
+  if (AI.lap > LAPS && AI.fin == null) AI.fin = +((now - G.goAt) / 1000).toFixed(1);
+  AI.presence = { pick: AI.car, ready: true, phase: AI.fin != null ? 'done' : (G.phase === 'count' ? 'count' : 'race'),
+    st: [AI.x, AI.y, AI.z, AI.h, AI.v, AI.pitch, AI.steer, 0], lap: AI.lap, idx: AI.idx, horn: 0, fin: AI.fin, bx: AI.bx.slice(), trk: TRACK_ID };
+}
+
 function honk() {
   const t = performance.now(); if (t - lastHorn < 700) return; lastHorn = t;
   initAudio(); horn(1); G.hornN++; sendPresence(true);
@@ -1084,8 +1170,10 @@ for (const t of CAR_KEYS) cards[t].addEventListener('click', () => {
 });
 $('readyBtn').addEventListener('click', () => { initAudio(); if (!G.pick) return; G.ready = !G.ready; sendPresence(true); updateLobby(); });
 $('soloBtn').addEventListener('click', () => { initAudio(); if (!G.pick) return; G.ready = true; startCountdown(true); });
+$('aiBtn').addEventListener('click', () => { initAudio(); if (!G.pick || NET.partner) return; G.ready = true; startAI('normal'); });
 $('againBtn').addEventListener('click', () => {
   G.phase = 'lobby'; G.ready = false; G.fin = null; G.lap = 0; G.solo = false; boostUntil = 0; resetDrift(); MO.forEach(m => m.hitAt = null);
+  AI.on = false; AI.presence = null;
   $('result').hidden = true; $('lobby').hidden = false; $('hud').hidden = true; $('controls').hidden = true;
   parkAll(); sendPresence(true); updateLobby();
 });
@@ -1126,6 +1214,7 @@ function updateLobby() {
   const rb = $('readyBtn');
   rb.disabled = !G.pick || !o; rb.textContent = !G.pick ? '先選一台車' : (G.ready ? '取消準備' : '準備好了！');
   $('soloBtn').disabled = !G.pick;
+  $('aiBtn').disabled = !G.pick || NET.partner !== null;
 }
 
 function startCountdown(solo) {
@@ -1510,6 +1599,7 @@ function frame(now) {
   readInput();
   updateBoostFx(dt);
   clouds.forEach(c => { c.position.x += dt * 2.5; if (c.position.x > CX + 1100) c.position.x = CX - 1100; });
+  if (AI.on && G.phase !== 'lobby') updateAI(now, dt);
   const op = readOpp(dt);
 
   // lobby: conflict + start checks
@@ -1604,6 +1694,7 @@ function fillResult(p) {
 
 requestAnimationFrame(frame);
 updateLobby();
+if (DBG) window.__race = { G, me, opp, AI, startAI, trackAt, TRACK_LEN, N };
 const autoCode = new URLSearchParams(location.search).get('join');
 if (autoCode && /^\d{4}$/.test(autoCode)) {
   const u = new URL(location.href); u.searchParams.delete('join'); history.replaceState(null, '', u.pathname + u.search);
