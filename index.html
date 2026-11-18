@@ -1823,7 +1823,7 @@ function storyStart(ch) {
   storyCh = ch; const p = storyLoad(), c = STORY.ch[ch];
   $('menu').hidden = true;
   const enter = () => enterMode('story');
-  if (ch === 1 && !p.introSeen) playDialog(STORY.open, () => { storySave(Object.assign(p, { introSeen: true })); playDialog(c.pre, enter); });
+  if (ch === 1 && !p.introSeen) playDialog(STORY.open.concat(c.pre), () => { storySave(Object.assign(p, { introSeen: true })); enter(); });
   else playDialog(c.pre, enter);
 }
 function storyResult(win) {
