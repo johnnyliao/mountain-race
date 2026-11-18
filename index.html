@@ -964,7 +964,7 @@ function readInput() {
 }
 
 /* ---------------- network (public MQTT relay, 4-digit code) ---------------- */
-const BROKERS = ['wss://broker.hivemq.com:8884/mqtt', 'wss://test.mosquitto.org:8081/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
+const BROKERS = ['wss://broker.hivemq.com:8884/mqtt', 'wss://test.mosquitto.org:8081/mqtt'];
 const TOPIC = 'sunny-mtn-race/v1/';
 const NET = { clients: [], role: null, code: null, me: Math.random().toString(36).slice(2, 10), partner: null, opp: null,
   lastRecv: 0, state: 'idle', err: '', seq: 0, lastSeq: -1, timers: [] };
