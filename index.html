@@ -86,11 +86,20 @@ h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:clamp(28px,6v
 .big{font-size:22px;padding:6px 26px;background:#4fd36a}
 .big:disabled{background:#cfd6df;color:#6b7a90;box-shadow:0 4px 0 #6b7a90;border-color:#6b7a90}
 .alt{font-size:16px;padding:6px 16px}
-.trk.sel{background:#ffd43b}
-#trackName{padding:2px 12px;font-family:var(--f-display);font-size:15px}
+.trk.sel,.lv.sel{background:#ffd43b}
+#trackName,#lvName,#storyBadge{padding:2px 12px;font-family:var(--f-display);font-size:15px}
 #result .panel{gap:12px}
-#resTitle{font-size:clamp(32px,8vh,56px)}
+#resTitle,#storyClear{font-size:clamp(32px,8vh,56px)}
+#storyClear{padding:14px 24px;background:#ffd43b;text-align:center}
 #resTimes{padding:8px 18px;font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;text-align:center;line-height:1.6}
+/* story: chapter buttons; dialog = full-screen click layer with the sticker box at the bottom */
+.chap{width:100%;max-width:600px;font-size:20px;padding:8px 16px}
+#dialog{position:fixed;inset:0;z-index:60;display:flex;align-items:flex-end;justify-content:center;padding:0 16px calc(18px + env(safe-area-inset-bottom,0px));cursor:pointer;background:linear-gradient(180deg,rgba(11,42,91,0) 45%,rgba(11,42,91,.4))}
+#dlgBox{width:100%;max-width:760px;padding:12px 22px;display:flex;flex-direction:column;gap:6px;min-height:150px}
+#dlgSpeaker{font-family:var(--f-display);font-weight:800;font-size:22px;color:var(--papaya)}
+#dlgText{font-size:22px;line-height:1.5}
+#dlgHint{align-self:flex-end;font-size:14px;opacity:.55}
+#dlgSkip{position:fixed;top:calc(12px + env(safe-area-inset-top,0px));right:calc(14px + env(safe-area-inset-right,0px));z-index:61;font-size:16px;padding:4px 14px}
 #rotate{position:fixed;inset:0;background:var(--sky);display:none;align-items:center;justify-content:center;flex-direction:column;gap:14px;text-align:center;padding:24px}
 #rotate .phone{width:70px;height:120px;border:6px solid var(--navy);border-radius:14px;background:var(--cream);animation:turn 1.6s ease-in-out infinite}
 @keyframes turn{0%,20%{transform:rotate(0)}60%,100%{transform:rotate(-90deg)}}
@@ -130,7 +139,29 @@ h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:clamp(28px,6v
   <div id="gas" class="pad">油門</div>
 </div>
 
-<div id="lobby" class="overlay">
+<div id="menu" class="overlay">
+  <div class="panel">
+    <h1>晴天山路兜風</h1>
+    <div class="row">
+      <button id="modeStory" class="big sticker" type="button">📖 劇情模式</button>
+      <button id="modeSolo" class="big sticker" type="button">🏁 單人練習</button>
+      <button id="modeNet" class="big sticker" type="button">🌐 連線對戰</button>
+    </div>
+  </div>
+</div>
+
+<div id="storyMenu" class="overlay" hidden>
+  <div class="panel">
+    <h1>山路之王</h1>
+    <span id="storyBadge" class="sticker" hidden>🏆 山路之王</span>
+    <button id="stc-1" class="big sticker chap" type="button"></button>
+    <button id="stc-2" class="big sticker chap" type="button"></button>
+    <button id="stc-3" class="big sticker chap" type="button"></button>
+    <button id="storyBackBtn" class="alt sticker" type="button">← 回主選單</button>
+  </div>
+</div>
+
+<div id="lobby" class="overlay" hidden>
   <div class="panel">
     <h1>晴天山路兜風</h1>
     <div class="netbar">
@@ -202,10 +233,21 @@ h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:clamp(28px,6v
         <span class="name">灰色野馬 GT500</span>
       </button>
     </div>
+    <div class="row" id="lvRow" hidden>
+      <span id="lvName" class="sticker">電腦難度</span>
+      <button id="lv-easy" class="alt sticker lv" type="button">簡單</button>
+      <button id="lv-normal" class="alt sticker lv sel" type="button">普通</button>
+      <button id="lv-hard" class="alt sticker lv" type="button">困難</button>
+    </div>
     <div class="row">
       <button id="readyBtn" class="big sticker" type="button" disabled>先選一台車</button>
-      <button id="soloBtn" class="alt sticker" type="button" disabled>自己先開</button>
+      <button id="soloBtn" class="alt sticker" type="button" disabled>自己開</button>
       <button id="aiBtn" class="alt sticker" type="button" disabled>跟電腦比</button>
+      <button id="backMenuBtn" class="alt sticker" type="button">← 回主選單</button>
+    </div>
+    <div class="row" id="storyRow" hidden>
+      <button id="storyGoBtn" class="big sticker" type="button" disabled>出發！</button>
+      <button id="storyLobBtn" class="alt sticker" type="button">← 關卡選單</button>
     </div>
   </div>
 </div>
@@ -213,9 +255,26 @@ h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:clamp(28px,6v
 <div id="result" class="overlay" hidden>
   <div class="panel">
     <h1 id="resTitle">抵達終點！</h1>
+    <h1 id="storyClear" class="sticker" hidden>🏆 恭喜阿力成為「山路之王」！</h1>
     <div id="resTimes" class="sticker"></div>
     <button id="againBtn" class="big sticker" type="button">再玩一次</button>
+    <button id="resMenuBtn" class="alt sticker" type="button">回主選單</button>
+    <div class="row" id="storyResRow" hidden>
+      <button id="storyNextBtn" class="big sticker" type="button">下一關 ▶</button>
+      <button id="storyRetryBtn" class="big sticker" type="button">再試一次</button>
+      <button id="storyChBtn" class="alt sticker" type="button">關卡選單</button>
+      <button id="storyClearBtn" class="big sticker" type="button">回主選單</button>
+    </div>
   </div>
+</div>
+
+<div id="dialog" hidden>
+  <div id="dlgBox" class="sticker">
+    <div id="dlgSpeaker"></div>
+    <div id="dlgText"></div>
+    <div id="dlgHint">▼ 點一下繼續</div>
+  </div>
+  <button id="dlgSkip" class="alt sticker" type="button">跳過 ▶▶</button>
 </div>
 
 <div id="rotate"><div class="phone"></div><p>請把手機轉成橫的</p></div>
@@ -1068,7 +1127,7 @@ function sendPresence(force) {
 }
 
 /* ---------------- game state ---------------- */
-const G = { phase: 'lobby', pick: null, ready: false, solo: false, goAt: 0, countAt: 0, lap: 0, fin: null, hornN: 0, lastCount: -1 };
+const G = { phase: 'lobby', mode: null, pick: null, ready: false, solo: false, goAt: 0, countAt: 0, lap: 0, fin: null, hornN: 0, lastCount: -1 }; // mode: 'solo' | 'net' (set when a lobby is entered)
 const me = { x: 0, y: 0, z: 0, h: 0, v: 0, idx: 0, pitch: 0 };
 const opp = { car: null, x: 0, y: 0, z: 0, h: 0, v: 0, pitch: 0, steer: 0, dv: 0, seen: false, horn: null };
 
@@ -1077,7 +1136,7 @@ const AI_LEVELS = { easy: { vmax: 0.80, corner: 0.85, band: 1.0 }, normal: { vma
 const AI_ALAT = 18; // m/s², lateral limit that sets the corner speed: sqrt(AI_ALAT / curvature)
 const DBG = new URLSearchParams(location.search).get('debug') === '1'; // debug=1 only: test hook and AI.noBand
 const AI = { on: false, level: 'normal', car: null, s: 0, lat: -5, latT: -5, v: 0, h: 0, x: 0, y: 0, z: 0, pitch: 0, steer: 0,
-  lap: 0, idx: 0, fin: null, bx: new Array(BOOST_EATS.length).fill(0), boostUntil: 0, presence: null, noBand: false };
+  lap: 0, idx: 0, fin: null, bx: new Array(BOOST_EATS.length).fill(0), boostUntil: 0, presence: null, noBand: false, f: 1 };
 const wrapS = s => ((s % TRACK_LEN) + TRACK_LEN) % TRACK_LEN;
 const aheadD = s => { const d = wrapS(s - AI.s); return d > TRACK_LEN / 2 ? d - TRACK_LEN : d; }; // signed distance from the AI, ahead > 0
 // road speed limit at distance s along the track (curvature from the heading change over 16 m)
@@ -1097,9 +1156,9 @@ function aiObstacles(tt) {
   ob.push({ d: aheadD(D[j]), lat: (me.x - P[j].x) * L[j].x + (me.z - P[j].z) * L[j].z, v: Math.max(0, me.v), reach: 12 });
   return ob;
 }
-function startAI(level) {
+function startAI(level, f = 1) { // f: speed factor (story retries slow the computer down); multiplies vmax and corner speed
   const others = CAR_KEYS.filter(t => t !== G.pick), i = N - 14, a = trackAt(D[i]);
-  Object.assign(AI, { on: true, level, car: others[Math.floor(Math.random() * others.length)], s: D[i], lat: -5, latT: -5, v: 0, h: a.h, pitch: a.pitch, steer: 0,
+  Object.assign(AI, { on: true, level, f, car: others[Math.floor(Math.random() * others.length)], s: D[i], lat: -5, latT: -5, v: 0, h: a.h, pitch: a.pitch, steer: 0,
     x: a.x - L[i].x * 5, y: a.y, z: a.z - L[i].z * 5, lap: 0, idx: i, fin: null, boostUntil: 0, presence: null });
   AI.bx.fill(0);
   startCountdown(false);
@@ -1132,8 +1191,8 @@ function updateAI(now, dt) {
   const gap = (AI.lap * TRACK_LEN + D[AI.idx]) - (G.lap * TRACK_LEN + D[me.idx]), band = DBG && AI.noBand ? 0 : lv.band;
   const bm = gap > 60 ? 1 - Math.min(0.25, 0.12 * band * (1 + (gap - 60) / 60)) : gap < -60 ? 1 + Math.min(0.25, 0.10 * band * (1 + (-gap - 60) / 60)) : 1;
   // target speed: level speed x rubber band, road ahead (brake 22 m/s² to each corner speed), blocking car, finished
-  let vt = Math.min(VMAX * lv.vmax * bm, BOOST_V);
-  for (let d = 0; d <= 90; d += 6) { const c = aiRoadV(AI.s + d) * lv.corner; vt = Math.min(vt, Math.sqrt(c * c + 44 * d)); }
+  let vt = Math.min(VMAX * lv.vmax * AI.f * bm, BOOST_V);
+  for (let d = 0; d <= 90; d += 6) { const c = aiRoadV(AI.s + d) * lv.corner * AI.f; vt = Math.min(vt, Math.sqrt(c * c + 44 * d)); }
   if (boosted) vt = BOOST_V;
   if (blk) vt = Math.min(vt, Math.sqrt(blk.v * blk.v + 44 * Math.max(0, blk.d - 9)));
   if (AI.fin != null) vt = Math.min(vt, 40 / 3.6);
@@ -1170,7 +1229,17 @@ for (const t of CAR_KEYS) cards[t].addEventListener('click', () => {
 });
 $('readyBtn').addEventListener('click', () => { initAudio(); if (!G.pick) return; G.ready = !G.ready; sendPresence(true); updateLobby(); });
 $('soloBtn').addEventListener('click', () => { initAudio(); if (!G.pick) return; G.ready = true; startCountdown(true); });
-$('aiBtn').addEventListener('click', () => { initAudio(); if (!G.pick || NET.partner) return; G.ready = true; startAI('normal'); });
+$('aiBtn').addEventListener('click', () => { initAudio(); if (!G.pick || NET.partner) return; G.ready = true; startAI(selLevel); });
+let selLevel = 'normal';
+for (const lv of ['easy', 'normal', 'hard']) $('lv-' + lv).addEventListener('click', () => {
+  selLevel = lv; for (const x of ['easy', 'normal', 'hard']) $('lv-' + x).classList.toggle('sel', x === lv);
+});
+function enterMode(mode) { G.mode = mode; $('menu').hidden = true; $('lobby').hidden = false; updateLobby(); }
+function backToMenu() { netReset(); G.ready = false; $('lobby').hidden = true; $('menu').hidden = false; }
+$('modeSolo').addEventListener('click', () => { initAudio(); enterMode('solo'); });
+$('modeNet').addEventListener('click', () => { initAudio(); enterMode('net'); });
+$('backMenuBtn').addEventListener('click', () => { initAudio(); backToMenu(); });
+$('resMenuBtn').addEventListener('click', () => { $('againBtn').click(); backToMenu(); });
 $('againBtn').addEventListener('click', () => {
   G.phase = 'lobby'; G.ready = false; G.fin = null; G.lap = 0; G.solo = false; boostUntil = 0; resetDrift(); MO.forEach(m => m.hitAt = null);
   AI.on = false; AI.presence = null;
@@ -1180,7 +1249,7 @@ $('againBtn').addEventListener('click', () => {
 $('music').addEventListener('click', () => { initAudio(); A.musicOn = !A.musicOn; $('music').textContent = A.musicOn ? '音樂 開' : '音樂 關'; });
 for (const id of [1, 2, 3]) {
   const b = $('trk-' + id); b.classList.toggle('sel', id === TRACK_ID);
-  b.addEventListener('click', () => { if (id !== TRACK_ID) location.href = '?track=' + id; });
+  b.addEventListener('click', () => { if (id !== TRACK_ID) location.href = '?track=' + id + '&mode=' + G.mode + (DBG ? '&debug=1' : ''); });
 }
 $('trackName').textContent = TRACK.name;
 
@@ -1195,7 +1264,12 @@ function updateLobby() {
     tag.textContent = G.pick === t ? '你' : '對手選了';
   }
   let msg, codeLook = false;
-  $('netRow').hidden = NET.state === 'connected' || NET.state === 'hosting' || NET.state === 'opening' || NET.state === 'joining' || NET.state === 'switching';
+  const solo = G.mode === 'solo', story = G.mode === 'story';
+  $('netRow').hidden = solo || story || NET.state === 'connected' || NET.state === 'hosting' || NET.state === 'opening' || NET.state === 'joining' || NET.state === 'switching';
+  $('status').hidden = solo || story; $('readyBtn').hidden = solo || story;
+  $('soloBtn').hidden = $('aiBtn').hidden = $('lvRow').hidden = !solo;
+  $('trackRow').hidden = story; $('backMenuBtn').hidden = story; $('storyRow').hidden = !story;
+  $('storyGoBtn').disabled = !G.pick;
   const trkLock = ['opening', 'hosting', 'joining', 'connected', 'switching'].includes(NET.state);
   for (const id of [1, 2, 3]) $('trk-' + id).disabled = trkLock;
   if (NET.state === 'idle') msg = '按「開房間」拿到房號，或輸入對方的房號';
@@ -1680,7 +1754,11 @@ function frame(now) {
   if (mirrorShown) drawMirror();
 }
 
-function showResult() { $('result').hidden = false; $('controls').hidden = true; fillResult((getOpp() || {}).presence); }
+function showResult() {
+  $('result').hidden = false; $('controls').hidden = true;
+  const p = (getOpp() || {}).presence; fillResult(p);
+  if (G.mode === 'story') storyResult(!(p && typeof p.fin === 'number' && p.fin < G.fin)); // won = finished before the computer
+}
 function fillResult(p) {
   const oFin = !G.solo && p && typeof p.fin === 'number' ? p.fin : null;
   const oRacing = !G.solo && p && p.phase === 'race';
@@ -1692,13 +1770,106 @@ function fillResult(p) {
   if ($('resTimes').innerHTML !== html) $('resTimes').innerHTML = html;
 }
 
+/* ---------------- story mode: 3 chapters; progress in localStorage (every access guarded); lines from story_draft.md ---------------- */
+const STORY = {
+  open: [['旁白', '山上有一條傳說中的山路，跑贏所有高手的人，就是「山路之王」！'], ['阿力', '我終於有自己的車了！我要變成山路之王！']],
+  ch: {
+    1: { title: '山腳下的挑戰', opp: '阿虎哥', level: 'easy',
+      pre: [['阿虎哥', '喲，新來的？這座山我最熟了，你追不上我啦！'], ['阿力', '比了才知道！'], ['提示', '按「油門」往前衝，彎道前記得「煞車」喔！']],
+      win: [['阿虎哥', '哇！你怎麼這麼快？……下次我一定贏回來！'], ['阿虎哥', '聽說中間那段山路，有個超會甩尾的高手，你敢去嗎？']],
+      lose: [['阿虎哥', '哈哈，我贏了！不過你很有天分，再來一次吧！']] },
+    2: { title: '彎道大師', opp: '飄移姐姐', level: 'normal',
+      pre: [['飄移姐姐', '你就是打敗阿虎的阿力？讓我看看你過彎的本事！'], ['飄移姐姐', '教你一招：轉彎時按住「甩尾」，冒出藍火、再變橘火，放開就會衝刺！'], ['阿力', '藍火、橘火……我記住了！']],
+      win: [['飄移姐姐', '好漂亮的甩尾！你已經比我厲害了。'], ['飄移姐姐', '最後一關是「極限山路」，那裡住著最強的車手……雷霆。小心！']],
+      lose: [['飄移姐姐', '差一點點！記得彎道用甩尾，你一定可以的！']] },
+    3: { title: '極限山路', opp: '雷霆', level: 'hard',
+      pre: [['雷霆', '……又一個想當山路之王的小鬼。'], ['阿力', '我是阿力！我要挑戰你！'], ['雷霆', '路上的黃色箭頭可以加速。不過，你追不上我的。']],
+      win: [['雷霆', '……從來沒有人贏過我。阿力，你才是真正的山路之王。']],
+      lose: [['雷霆', '還不夠快。練好了再來找我。'], ['阿力', '我不會放棄的！']] }
+  }
+};
+const STORY_KEY = 'mtnrace.story';
+let storyCh = 0, storyLosses = 0, dlgLines = null, dlgI = 0, dlgDone = null;
+function storyLoad() {
+  try {
+    const s = JSON.parse(localStorage.getItem(STORY_KEY));
+    if (s && typeof s === 'object') return { unlocked: [1, 2, 3].includes(s.unlocked) ? s.unlocked : 1, cleared: s.cleared === true, introSeen: s.introSeen === true };
+  } catch (_) {}
+  return { unlocked: 1, cleared: false, introSeen: false };
+}
+function storySave(p) { try { localStorage.setItem(STORY_KEY, JSON.stringify(p)); } catch (_) {} }
+const storyFactor = () => Math.max(0.85, 1 - 0.05 * storyLosses); // each loss slows the computer 5%, down to 85%
+const storyUrl = ch => '?track=' + ch + '&mode=story&ch=' + ch + (DBG ? '&debug=1' : '');
+
+// dialog: one line per click (or tap anywhere); 跳過 ends it at once
+function playDialog(lines, onDone) { dlgLines = lines; dlgI = 0; dlgDone = onDone; $('dialog').hidden = false; showDlgLine(); }
+function showDlgLine() { $('dlgSpeaker').textContent = dlgLines[dlgI][0]; $('dlgText').textContent = dlgLines[dlgI][1]; }
+function endDlg() { const f = dlgDone; dlgLines = null; dlgDone = null; $('dialog').hidden = true; if (f) f(); }
+function nextDlg() { if (!dlgLines) return; if (++dlgI < dlgLines.length) showDlgLine(); else endDlg(); }
+$('dialog').addEventListener('click', nextDlg);
+$('dlgSkip').addEventListener('click', e => { e.stopPropagation(); endDlg(); });
+
+function openStoryMenu() {
+  const p = storyLoad();
+  for (const ch of [1, 2, 3]) {
+    const locked = ch > p.unlocked, b = $('stc-' + ch);
+    b.disabled = locked;
+    b.textContent = (locked ? '🔒 ' : '') + `第 ${ch} 關　${STORY.ch[ch].title}／${TRACKS[ch].label}／對手：${STORY.ch[ch].opp}`;
+  }
+  $('storyBadge').hidden = !p.cleared;
+  $('menu').hidden = true; $('storyMenu').hidden = false;
+}
+function storyStart(ch) {
+  storyCh = ch; const p = storyLoad(), c = STORY.ch[ch];
+  $('menu').hidden = true;
+  const enter = () => enterMode('story');
+  if (ch === 1 && !p.introSeen) playDialog(STORY.open, () => { storySave(Object.assign(p, { introSeen: true })); playDialog(c.pre, enter); });
+  else playDialog(c.pre, enter);
+}
+function storyResult(win) {
+  const p = storyLoad();
+  if (win) { p.unlocked = Math.max(p.unlocked, Math.min(3, storyCh + 1)); if (storyCh === 3) p.cleared = true; storySave(p); }
+  $('againBtn').hidden = $('resMenuBtn').hidden = true; $('storyResRow').hidden = true;
+  playDialog(win ? STORY.ch[storyCh].win : STORY.ch[storyCh].lose, () => storyEndButtons(win));
+}
+function storyEndButtons(win) {
+  const clear = win && storyCh === 3;
+  $('storyClear').hidden = !clear; $('resTitle').hidden = clear; $('resTimes').hidden = clear;
+  $('storyNextBtn').hidden = !win || clear; $('storyRetryBtn').hidden = win; $('storyChBtn').hidden = clear; $('storyClearBtn').hidden = !clear;
+  $('storyResRow').hidden = false;
+}
+function storyFinish(win) { // DBG test hook: end the race as if it was won or lost
+  if (G.fin == null) G.fin = +((performance.now() - G.goAt) / 1000).toFixed(1);
+  AI.fin = win ? null : Math.max(0.1, G.fin - 1);
+  if (AI.presence) AI.presence.fin = AI.fin; // showResult reads the presence before the next frame refreshes it
+  G.phase = 'done'; showResult();
+}
+$('modeStory').addEventListener('click', () => { initAudio(); openStoryMenu(); });
+$('storyBackBtn').addEventListener('click', () => { $('storyMenu').hidden = true; $('menu').hidden = false; });
+for (const ch of [1, 2, 3]) $('stc-' + ch).addEventListener('click', () => { location.href = storyUrl(ch); });
+$('storyGoBtn').addEventListener('click', () => { initAudio(); if (!G.pick) return; G.ready = true; startAI(STORY.ch[storyCh].level, storyFactor()); });
+$('storyLobBtn').addEventListener('click', () => { initAudio(); backToMenu(); openStoryMenu(); });
+$('storyNextBtn').addEventListener('click', () => { location.href = storyUrl(storyCh + 1); });
+$('storyRetryBtn').addEventListener('click', () => { storyLosses++; $('againBtn').click(); });
+$('storyChBtn').addEventListener('click', () => { $('againBtn').click(); backToMenu(); openStoryMenu(); });
+$('storyClearBtn').addEventListener('click', () => { $('againBtn').click(); backToMenu(); });
+
 requestAnimationFrame(frame);
 updateLobby();
-if (DBG) window.__race = { G, me, opp, AI, startAI, trackAt, TRACK_LEN, N };
+if (DBG) window.__race = { G, me, opp, AI, startAI, trackAt, TRACK_LEN, N, storyFinish, storyProg: storyLoad };
 const autoCode = new URLSearchParams(location.search).get('join');
 if (autoCode && /^\d{4}$/.test(autoCode)) {
   const u = new URL(location.href); u.searchParams.delete('join'); history.replaceState(null, '', u.pathname + u.search);
+  enterMode('net');
   joinRoom(autoCode);
+} else {
+  const sp = new URLSearchParams(location.search), m = sp.get('mode') || (DBG ? 'solo' : '');
+  if (m === 'solo' || m === 'net') enterMode(m); // otherwise the main menu stays up
+  else if (m === 'story') {
+    const ch = Number(sp.get('ch'));
+    if (Number.isInteger(ch) && ch >= 1 && ch <= 3 && ch === TRACK_ID && ch <= storyLoad().unlocked) storyStart(ch);
+    else openStoryMenu(); // locked or missing chapter: show the chapter select
+  }
 }
 })();
 </script>
