@@ -1531,7 +1531,7 @@ function updateDriftFx(dt, car) {
 
 /* ---------------- cockpit view: driver's seat, drawn over the 3D scene with its own camera and lights ---------------- */
 const cockpitScene = new THREE.Scene();
-cockpitScene.add(new THREE.HemisphereLight(0xcfe9ff, 0x5d8a3c, 0.9));
+cockpitScene.add(new THREE.HemisphereLight(0xcfe9ff, 0x5d8a3c, 0.75));
 const cockpitSun = new THREE.DirectionalLight(0xfff0d0, 0.6); cockpitSun.position.set(0.4, 1, 0.6); cockpitScene.add(cockpitSun);
 const cockpitCam = new THREE.PerspectiveCamera(62, 1, 0.01, 20); // stays at the origin with identity rotation; parts are built in this space
 const CK_Q = new THREE.Quaternion(), CK_TURN = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI), CK_PITCH = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.05);
@@ -1542,49 +1542,226 @@ const COCK_STYLE = {
   sub: { body: 0x1f4fa8, dash: 0x1d1f24, trim: 0xd4a017, rim: 0x1d1d22, hub: 0xd4a017, lat: -0.35, y: 2.3, z: -0.1 },
   gt500: { body: 0x8f969c, dash: 0x222428, trim: 0x8f969c, rim: 0x1d1d22, hub: 0xcfd3d7, lat: 0.35, y: 2.04, z: -0.1 }
 };
-const COCK_GLOVE = M(0xd62828), COCK_SUIT = M(0x0b2a5b), COCK_NEEDLE = M(0xff3b3b), COCK_BLACK = M(0x1d1d22);
 const COCK_KMH_MAX = 240; // gauge full scale
-// cylinder from a to b (both in cockpit space); used for arms, pillars and spokes
-function beam(a, b, r, mat) { const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 1, 8), mat); setBeam(m, a, b); return m; }
-function setBeam(m, a, b) {
-  const d = new THREE.Vector3().subVectors(b, a), len = d.length();
+const CK_UP = new THREE.Vector3(0, 1, 0), CK_D = new THREE.Vector3(), CK_N = new THREE.Vector3(), CK_A = new THREE.Vector3(), CK_B = new THREE.Vector3(), CK_W = new THREE.Vector3();
+const CK_FORE = 0.28; // forearm length (wrist to elbow); the elbow lands below the view
+const CK_SHOULDER = [new THREE.Vector3(-0.22, -0.6, 0.12), new THREE.Vector3(0.22, -0.6, 0.12)]; // behind and below the eye, off screen
+// surface presets; glossy parts take the car reflection map
+const CK_MAT = (c, rough, metal, env) => new THREE.MeshStandardMaterial({ color: c, roughness: rough === undefined ? 0.7 : rough, metalness: metal || 0, envMap: env ? CAR_ENV : null, envMapIntensity: env ? 0.5 : 1 });
+const CK_GLOVE = CK_MAT(0xd62828, 0.7), CK_GLOVE_BLK = CK_MAT(0x1d1d22, 0.6), CK_WHITE = CK_MAT(0xf4f4f4, 0.6), CK_BLACK = CK_MAT(0x1d1d22, 0.6);
+const CK_SUIT = CK_MAT(0x0b2a5b, 0.8), CK_YELLOW = CK_MAT(0xffd43b, 0.5), CK_NEEDLE = CK_MAT(0xff3b3b, 0.4), CK_CHROME = CK_MAT(0xdfe6ec, 0.22, 1, true), CK_ALU = CK_MAT(0xbfc4c9, 0.35, 1, true), CK_CONSOLE = CK_MAT(0x2a2b30, 0.6);
+const CK_CARBON_TEX = (function carbonTex() {
+  const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
+  for (let y = 0; y < 128; y += 8) for (let x = 0; x < 128; x += 8) { g.fillStyle = ((x + y) / 8) % 2 ? '#2b2d33' : '#16171b'; g.fillRect(x, y, 8, 8); }
+  g.strokeStyle = 'rgba(255,255,255,0.07)'; g.lineWidth = 2;
+  for (let i = -128; i < 128; i += 16) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i + 128, 128); g.stroke(); }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(6, 6); return t;
+})();
+const CK_CARBON = new THREE.MeshStandardMaterial({ color: 0xffffff, map: CK_CARBON_TEX, roughness: 0.38, metalness: 0.1 });
+// shared unit geometries (scaled per mesh); sleeves and pillars are tapered: radius 1 at the start point, smaller at the end
+const CK_UNIT_CYL = new THREE.CylinderGeometry(1, 1, 1, 12), CK_UNIT_BOX = new THREE.BoxGeometry(1, 1, 1), CK_UNIT_SPHERE = new THREE.SphereGeometry(1, 12, 9);
+const CK_SLEEVE = new THREE.CylinderGeometry(0.85, 1, 1, 14), CK_PILLAR = new THREE.CylinderGeometry(0.6, 1, 1, 12);
+// orient a unit-height mesh from a to b (a = bottom); sx / sz set its radius, or width and depth for boxes; no allocation
+function ckPlace(m, a, b, sx, sz) {
+  CK_D.subVectors(b, a); const len = CK_D.length();
   m.position.addVectors(a, b).multiplyScalar(0.5);
-  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.divideScalar(len));
-  m.scale.set(1, len, 1);
+  m.quaternion.setFromUnitVectors(CK_UP, CK_D.divideScalar(len));
+  m.scale.set(sx, len, sz); return m;
+}
+function ckLimbMesh(geo, mat, a, b, r) { return ckPlace(new THREE.Mesh(geo, mat), a, b, r, r); }
+function ckBand(m, a, b, t, r) {
+  CK_N.subVectors(b, a).normalize();
+  CK_A.lerpVectors(a, b, t).addScaledVector(CK_N, -0.006); CK_B.lerpVectors(a, b, t).addScaledVector(CK_N, 0.006);
+  ckPlace(m, CK_A, CK_B, r, r);
+}
+// dials: needle sweeps 240 deg clockwise; f = 0 lower left, f = 1 lower right
+const CK_KMH_DIAL = { max: 240, step: 40, minor: 4, red: 200 / 240, label: 'km/h' };
+const CK_RPM_DIAL = { max: 8, step: 1, minor: 2, red: 6.5 / 8, label: 'RPM x1000' };
+const CK_BOOST_DIAL = { max: 2, step: 1, minor: 2, red: 1.5 / 2, label: 'BOOST' };
+function ckSetDial(piv, f) { piv.rotation.z = 2.094 - 4.189 * Math.min(1, Math.max(0, f)); }
+// dial face on a 256 canvas: ticks, numbers, red zone, label
+function ckDialTex(o) {
+  const c = document.createElement('canvas'); c.width = c.height = 256; const g = c.getContext('2d');
+  const cx = 128, cy = 128, r = 124;
+  const ang = f => (210 - 240 * f) * Math.PI / 180, pt = (f, rad) => [cx + rad * Math.cos(ang(f)), cy - rad * Math.sin(ang(f))];
+  g.fillStyle = o.face; g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = '#e8413b'; g.lineWidth = 14; g.beginPath();
+  for (let f = o.red; f <= 1.001; f += 0.01) { const p = pt(f, r * 0.84); if (f === o.red) g.moveTo(p[0], p[1]); else g.lineTo(p[0], p[1]); }
+  g.stroke();
+  const n = o.max / o.step, total = n * o.minor;
+  g.strokeStyle = o.ink;
+  for (let i = 0; i <= total; i++) {
+    const f = i / total, major = i % o.minor === 0, p0 = pt(f, r * (major ? 0.66 : 0.8)), p1 = pt(f, r * 0.94);
+    g.lineWidth = major ? 6 : 3; g.beginPath(); g.moveTo(p0[0], p0[1]); g.lineTo(p1[0], p1[1]); g.stroke();
+  }
+  g.fillStyle = o.ink; g.font = 'bold 26px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  for (let i = 0; i <= n; i++) { const p = pt(i / n, r * 0.6); g.fillText(String(i * o.step), p[0], p[1]); }
+  g.font = 'bold 22px sans-serif'; g.fillText(o.label, cx, cy + 56);
+  g.beginPath(); g.arc(cx, cy, 8, 0, Math.PI * 2); g.fill();
+  return new THREE.CanvasTexture(c);
+}
+// round gauge with chrome bezel; returns the needle pivot (rotate it with ckSetDial)
+function ckDial(parent, x, y, z, r, o) {
+  const g = new THREE.Group(); g.position.set(x, y, z);
+  const face = new THREE.Mesh(new THREE.CircleGeometry(r, 40), new THREE.MeshStandardMaterial({ map: ckDialTex(o), roughness: 0.35 }));
+  const bezel = new THREE.Mesh(new THREE.TorusGeometry(r, r * 0.09, 10, 40), CK_CHROME);
+  const piv = new THREE.Group(); piv.position.z = 0.006;
+  const needle = new THREE.Mesh(CK_UNIT_BOX, CK_NEEDLE); needle.scale.set(r * 0.07, r * 0.9, r * 0.05); needle.position.y = r * 0.45; piv.add(needle);
+  const cap = new THREE.Mesh(new THREE.CircleGeometry(r * 0.1, 16), CK_BLACK); cap.position.z = 0.004; piv.add(cap);
+  g.add(face, bezel, piv); parent.add(g);
+  return piv;
+}
+// gloved hand gripping a rim of radius R and tube radius rt at angle th (0 = 3 o'clock); sy = +1 puts the index finger on top
+// Pose as in real in-car views: the forearm rises from below the view, the wrist is straight, the back of the hand faces the driver,
+// the knuckles sit on the front of the rim and the fingers drape over it toward the wheel centre and curl behind it; thumb on the inner edge.
+function ckHand(R, rt, th, sy) {
+  const hg = new THREE.Group(); hg.position.set(R * Math.cos(th), R * Math.sin(th), 0); hg.rotation.z = th;
+  // hand space: origin on the tube centre, +X outward from the rim, +Z toward the driver, +Y along the rim
+  const seg = (a, b, r, mat) => { hg.add(ckPlace(new THREE.Mesh(CK_UNIT_CYL, mat), a, b, r, r)); };
+  const dot = (p, r, mat, ex, ey, ez) => { const m = new THREE.Mesh(CK_UNIT_SPHERE, mat); m.position.copy(p); m.scale.set(r * (ex || 1), r * (ey || 1), r * (ez || 1)); hg.add(m); };
+  // fd: from the knuckles back toward the elbow (down, a little outward, toward the driver in wheel space), in hand space
+  const fd = new THREE.Vector3(sy * 0.4, -0.85, 0.35).normalize().applyAxisAngle(new THREE.Vector3(0, 0, 1), -th);
+  const pw = new THREE.Vector3(0, 1, 0).addScaledVector(fd, -fd.y).normalize(), pn = new THREE.Vector3().crossVectors(fd, pw);
+  if (pn.z < 0) { pn.negate(); pw.negate(); }
+  const K = new THREE.Vector3(-rt * 0.55, 0, rt + 0.014); // knuckle row centre, at the inner-front edge of the rim; the palm covers the rim front
+  const palm = new THREE.Group(); palm.position.copy(K); palm.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(fd, pw, pn)); hg.add(palm);
+  const pdot = (x, y, z, ex, ey, ez, mat) => { const m = new THREE.Mesh(CK_UNIT_SPHERE, mat); m.position.set(x, y, z); m.scale.set(ex, ey, ez); palm.add(m); };
+  // back of the hand (palm-group x runs from the knuckles toward the wrist), white logo stripe
+  pdot(0.034, 0, 0.004, 0.05, 0.05, 0.024, CK_GLOVE);
+  pdot(0.07, 0, 0.002, 0.034, 0.04, 0.024, CK_GLOVE);
+  pdot(0.04, 0, 0.026, 0.024, 0.007, 0.004, CK_WHITE);
+  // four fingers wrapped round the rim like a fist: from the knuckles at the inner edge they bend straight behind the rim, hug it and curl back toward the outer side;
+  // each finger drifts toward 12 o'clock as it wraps so the rim crosses the hand diagonally, like a real grip
+  const ph = [1, 0.92, 0.84];
+  const fingers = [[0.033, 0.0112], [0.011, 0.0116], [-0.011, 0.011], [-0.031, 0.0095]];
+  for (const [o, fr] of fingers) {
+    const rad = ph.map(k => fr * k), jr = [rad[0] * 1.05, rad[0], rad[1], rad[2]], J = [];
+    const ang = [140, 192, 246, 298];
+    for (let j = 0; j < 4; j++) { const q = ang[j] * Math.PI / 180, rr = rt + jr[j] * 0.92; /* hug the tube */ J.push(new THREE.Vector3(rr * Math.cos(q), sy * (o + 0.006 * j), rr * Math.sin(q))); }
+    for (let j = 0; j < 3; j++) seg(J[j], J[j + 1], rad[j], j === 2 ? CK_GLOVE_BLK : CK_GLOVE);
+    for (let j = 0; j < 4; j++) dot(J[j], jr[j], j >= 3 ? CK_GLOVE_BLK : CK_GLOVE);
+  }
+  // thumb: from the index side of the palm, around the inner edge of the rim, pointing up along it
+  const T = [K.clone().addScaledVector(fd, 0.03).add(new THREE.Vector3(-0.004, sy * 0.042, -0.004)), new THREE.Vector3(-rt * 0.75, sy * 0.044, rt + 0.008), new THREE.Vector3(-rt - 0.008, sy * 0.05, rt * 0.35)];
+  seg(T[0], T[1], 0.0125, CK_GLOVE); seg(T[1], T[2], 0.0115, CK_GLOVE_BLK);
+  dot(T[0], 0.014, CK_GLOVE); dot(T[1], 0.0122, CK_GLOVE); dot(T[2], 0.0112, CK_GLOVE_BLK);
+  // glove cuff with white velcro strap, in line with the forearm; the sleeve ends at the wrist anchor inside the cuff
+  const WA = K.clone().addScaledVector(fd, 0.09), wd = fd;
+  hg.add(ckPlace(new THREE.Mesh(CK_UNIT_CYL, CK_GLOVE), WA.clone().addScaledVector(wd, -0.02), WA.clone().addScaledVector(wd, 0.03), 0.033, 0.033));
+  dot(WA.clone().addScaledVector(wd, -0.02), 0.033, CK_GLOVE);
+  hg.add(ckPlace(new THREE.Mesh(CK_UNIT_CYL, CK_WHITE), WA.clone(), WA.clone().addScaledVector(wd, 0.018), 0.0345, 0.0345));
+  const wrist = new THREE.Object3D(); wrist.position.copy(WA).addScaledVector(wd, 0.03); hg.add(wrist);
+  const elbow = new THREE.Object3D(); elbow.position.copy(wrist.position).addScaledVector(wd, CK_FORE); hg.add(elbow); // straight forearm, no wrist kink
+  return { group: hg, wrist, elbow };
 }
 function makeCockpit(type) {
   const S = COCK_STYLE[type], cx = S.lat, group = new THREE.Group();
-  const body = M(S.body), dash = M(S.dash), trim = M(S.trim), rim = M(S.rim), hub = M(S.hub);
+  const body = CK_MAT(S.body, 0.5, 0, true), dash = CK_MAT(S.dash, 0.5), trim = CK_MAT(S.trim, 0.45, 0.2, true), rim = CK_MAT(S.rim, 0.6), hub = CK_MAT(S.hub, 0.35);
   const tilt = new THREE.Group(); tilt.position.set(0, -0.25, -0.5); tilt.rotation.x = -0.5; // wheel face tipped up toward the eyes
   const wheel = new THREE.Group(); tilt.add(wheel); group.add(tilt);
-  const R = type === 'f1' ? 0.17 : 0.18;
+  const R = 0.18, rt = type === 'f1' ? 0.03 : type === 'bug' ? 0.02 : 0.026;
+  // each hand may only move within [lo, hi] of the car's frame (deg); past that it slides along the rim (re-grip). The F1 grips are fixed to the wheel.
+  const hands = (type === 'f1' ? [[160, -1, 0, 0], [20, 1, 0, 0]] : [[155, -1, 135, 200], [25, 1, -20, 45]]).map(([d, s, lo, hi]) => {
+    const rest = d * Math.PI / 180, h = ckHand(R, rt, rest, s);
+    wheel.add(h.group);
+    return { group: h.group, wrist: h.wrist, elbow: h.elbow, R, rest, lo: type === 'f1' ? -Infinity : lo * Math.PI / 180, hi: type === 'f1' ? Infinity : hi * Math.PI / 180 };
+  });
+  const arms = hands.map((h, i) => {
+    const a = { S: CK_SHOULDER[i], wrist: h.wrist, elbowAt: h.elbow, elbow: new THREE.Vector3(), up: new THREE.Mesh(CK_SLEEVE, CK_SUIT), fore: new THREE.Mesh(CK_SLEEVE, CK_SUIT), joint: new THREE.Mesh(CK_UNIT_SPHERE, CK_SUIT), bu: new THREE.Mesh(CK_UNIT_CYL, CK_WHITE), bf: new THREE.Mesh(CK_UNIT_CYL, CK_WHITE) };
+    group.add(a.up, a.fore, a.joint, a.bu, a.bf); return a;
+  });
+  let tick; // per-frame display update: tick(kmh, dt)
   if (type === 'f1') {
-    group.add(box(0.6, 0.22, 0.6, dash, 0, -0.27, -0.95), box(0.5, 0.24, 2.0, body, 0, -0.36, -2.25)); // cowl and nose
-    const halo = new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.035, 6, 16, Math.PI), rim); halo.position.set(0, -0.1, -0.85); group.add(halo);
-    for (const s of [1, -1]) { const t = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.22, 14), rim); t.rotation.z = Math.PI / 2; t.position.set(s * 0.95, -0.42, -1.8); group.add(t); }
-    // rectangular F1 wheel: bars, dark grips at 3 and 9 o'clock, small display
-    wheel.add(box(0.36, 0.03, 0.03, rim, 0, 0.11, 0), box(0.36, 0.03, 0.03, rim, 0, -0.11, 0));
-    for (const s of [1, -1]) wheel.add(box(0.05, 0.25, 0.05, rim, s * R, 0, 0));
-    wheel.add(box(0.14, 0.06, 0.01, M(0x3bd16f), 0, 0.03, 0.01));
+    group.add(box(0.6, 0.22, 0.6, CK_CARBON, 0, -0.27, -0.95), box(0.5, 0.24, 2.0, body, 0, -0.36, -2.25)); // carbon cowl, painted nose
+    const halo = new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.035, 10, 32, Math.PI), rim); halo.position.set(0, -0.1, -0.85); group.add(halo);
+    for (const s of [1, -1]) {
+      const t = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.22, 20), CK_BLACK); t.rotation.z = Math.PI / 2; t.position.set(s * 0.95, -0.42, -1.8); group.add(t);
+      group.add(ball(0.09, dash, s * 0.33, -0.1, -0.2, 1.1, 1.8, 1)); // padded headrest edges framing the view
+    }
+    // rectangular F1 wheel: carbon body, centre LCD, shift LEDs, buttons, knobs, grips at 9 and 3 o'clock
+    const k = 0.045, w = 0.19, h = 0.135, sh = new THREE.Shape();
+    sh.moveTo(-w + k, -h); sh.lineTo(w - k, -h); sh.quadraticCurveTo(w, -h, w, -h + k); sh.lineTo(w, h - k); sh.quadraticCurveTo(w, h, w - k, h); sh.lineTo(-w + k, h); sh.quadraticCurveTo(-w, h, -w, h - k); sh.lineTo(-w, -h + k); sh.quadraticCurveTo(-w, -h, -w + k, -h);
+    const wb = new THREE.Mesh(new THREE.ExtrudeGeometry(sh, { depth: 0.024, bevelEnabled: true, bevelThickness: 0.008, bevelSize: 0.008, bevelSegments: 2, curveSegments: 5 }), CK_CARBON);
+    wb.position.z = -0.012; wheel.add(wb);
+    wheel.add(box(0.16, 0.09, 0.009, CK_BLACK, 0, 0.02, 0.0245));
+    const lc = document.createElement('canvas'); lc.width = 256; lc.height = 128; const lg = lc.getContext('2d'), lcdTex = new THREE.CanvasTexture(lc);
+    const lcdDraw = kmh => {
+      lg.fillStyle = '#07090c'; lg.fillRect(0, 0, 256, 128); lg.fillStyle = '#4cf08a'; lg.textAlign = 'center'; lg.textBaseline = 'middle';
+      lg.font = 'bold 100px sans-serif'; lg.fillText(kmh < 3 ? 'N' : String(Math.min(8, 1 + Math.floor(kmh / 28))), 66, 66);
+      lg.font = 'bold 58px sans-serif'; lg.fillText(String(Math.round(kmh)), 180, 54);
+      lg.font = 'bold 20px sans-serif'; lg.fillText('km/h', 180, 102);
+      lcdTex.needsUpdate = true;
+    };
+    lcdDraw(0);
+    const lcd = new THREE.Mesh(new THREE.PlaneGeometry(0.15, 0.08), new THREE.MeshStandardMaterial({ map: lcdTex, emissive: 0xffffff, emissiveMap: lcdTex, roughness: 0.3 }));
+    lcd.position.set(0, 0.02, 0.0305); wheel.add(lcd);
+    const leds = [];
+    for (let i = 0; i < 9; i++) {
+      const mat = CK_MAT(0x222226, 0.4), m = new THREE.Mesh(CK_UNIT_BOX, mat); m.scale.set(0.016, 0.01, 0.006); m.position.set((i - 4) * 0.021, 0.103, 0.024); wheel.add(m);
+      leds.push({ mat, c: i < 3 ? 0x2ee05a : i < 6 ? 0xff3030 : 0x3a7bff });
+    }
+    for (const [x, c] of [[-0.13, 0xff3b3b], [-0.09, 0xffd43b], [0.09, 0x3a7bff], [0.13, 0x3bd16f]]) { const b = new THREE.Mesh(new THREE.CylinderGeometry(0.009, 0.009, 0.008, 14), CK_MAT(c, 0.4)); b.rotation.x = Math.PI / 2; b.position.set(x, -0.06, 0.026); wheel.add(b); }
+    for (const x of [-0.1, 0.1]) { const kn = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.014, 20), CK_BLACK); kn.rotation.x = Math.PI / 2; kn.position.set(x, -0.105, 0.027); wheel.add(kn); }
+    for (const d of [165, 15]) {
+      const a = d * Math.PI / 180, gx = R * Math.cos(a), gy = R * Math.sin(a), tx = -Math.sin(a) * 0.1, ty = Math.cos(a) * 0.1;
+      const p0 = new THREE.Vector3(gx - tx, gy - ty, 0), p1 = new THREE.Vector3(gx + tx, gy + ty, 0);
+      wheel.add(ckLimbMesh(CK_UNIT_CYL, CK_BLACK, p0, p1, rt), ball(rt, CK_BLACK, p0.x, p0.y, p0.z), ball(rt, CK_BLACK, p1.x, p1.y, p1.z));
+    }
+    for (const s of [1, -1]) wheel.add(box(0.05, 0.12, 0.012, CK_CARBON, s * 0.2, 0.02, -0.03)); // paddle shifters behind the wheel
+    let lcdT = 0;
+    tick = (kmh, dt) => {
+      const lit = Math.floor(Math.min(1, kmh / COCK_KMH_MAX) * 9);
+      leds.forEach((L, i) => { const on = i < lit; L.mat.color.setHex(on ? L.c : 0x222226); L.mat.emissive.setHex(on ? L.c : 0); });
+      lcdT -= dt; if (lcdT <= 0) { lcdT = 0.1; lcdDraw(kmh); }
+    };
   } else {
-    if (type === 'bug') group.add(ball(0.78, dash, cx, -0.31, -1.0, 1, 0.25, 0.5)); // round Beetle-style dash
-    else group.add(box(1.5, 0.2, 0.6, dash, cx, -0.23, -0.95));
-    group.add(box(1.4, 0.06, 1.0, body, cx, -0.36, -1.1)); // bonnet, low so the road shows above it
-    if (type === 'gt500') for (const s of [1, -1]) group.add(box(0.16, 0.01, 1.0, COCK_BLACK, cx + s * 0.12, -0.326, -1.1));
+    // steering rim: thick grip, contrasting stitch line, yellow top marker
+    const rimMat = type === 'bug' ? CK_MAT(0xd6c9a6, 0.25, 0, true) : CK_MAT(0x1d1d22, type === 'sub' ? 0.95 : 0.75);
+    const spokeMat = type === 'bug' ? rimMat : type === 'sub' ? CK_MAT(0x1d1d22, 0.9) : CK_ALU;
+    wheel.add(new THREE.Mesh(new THREE.TorusGeometry(R, rt, 16, 64), rimMat));
+    if (type !== 'bug') { const st = new THREE.Mesh(new THREE.TorusGeometry(R, 0.0035, 6, 64), CK_MAT(type === 'sub' ? S.trim : 0xe8e1cc, 0.6)); st.position.z = rt; wheel.add(st); }
+    const mark = new THREE.Mesh(new THREE.TorusGeometry(R, 0.0065, 6, 16, 0.22), CK_YELLOW); mark.rotation.z = Math.PI / 2 - 0.11; mark.position.z = rt; wheel.add(mark);
+    // flattened spokes; bug has two, the others three
+    const spokes = type === 'bug' ? [0, Math.PI] : [270, 30, 150].map(d => d * Math.PI / 180);
+    for (const a of spokes) wheel.add(ckPlace(new THREE.Mesh(CK_UNIT_BOX, spokeMat), new THREE.Vector3(0, 0, 0), new THREE.Vector3(R * Math.cos(a), R * Math.sin(a), 0), type === 'bug' ? 0.024 : 0.034, type === 'bug' ? 0.014 : 0.016));
+    const hubR = type === 'bug' ? 0.05 : 0.046;
+    const hubM = new THREE.Mesh(new THREE.CylinderGeometry(hubR, hubR, 0.024, 24), type === 'sub' ? CK_MAT(0x1d1d22, 0.9) : CK_CHROME);
+    hubM.rotation.x = Math.PI / 2; hubM.position.z = 0.008; wheel.add(hubM);
+    const badge = new THREE.Mesh(new THREE.CircleGeometry(hubR * 0.6, 24), hub); badge.position.z = 0.0205; wheel.add(badge);
+    if (type === 'bug') { const horn = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.008, 10, 40), CK_CHROME); horn.position.z = 0.008; wheel.add(horn); }
+    // dashboard, bonnet and window frame
+    group.add(ball(0.8, dash, cx, -0.33, -1.1, 1, 0.22, 0.5)); // smooth rounded dash top
+    group.add(box(1.4, 0.06, 1.0, type === 'gt500' ? dash : body, cx, -0.36, -1.1)); // bonnet, low so the road shows above it; gt500 uses the dark dash colour so the slab below the wheel stays dark
+    if (type === 'gt500') { for (const s of [1, -1]) group.add(box(0.16, 0.01, 1.0, CK_BLACK, cx + s * 0.12, -0.326, -1.1)); group.add(ball(0.55, CK_ALU, cx, -0.17, -0.94, 1, 0.022, 0.07)); } // bonnet stripes, aluminium dash strip
     if (type === 'sub') group.add(box(0.1, 0.01, 1.0, trim, cx, -0.326, -1.1));
-    for (const s of [1, -1]) group.add(beam(new THREE.Vector3(cx + s * 0.75, -0.16, -0.9), new THREE.Vector3(cx + s * 0.8, 0.4, -1.15), 0.022, trim)); // A-pillars
-    group.add(beam(new THREE.Vector3(cx - 0.8, 0.4, -1.15), new THREE.Vector3(cx + 0.8, 0.4, -1.15), 0.028, trim)); // roof header
-    wheel.add(new THREE.Mesh(new THREE.TorusGeometry(R, 0.02, 8, 28), rim));
-    if (type === 'bug') wheel.add(beam(new THREE.Vector3(-R, 0, 0), new THREE.Vector3(R, 0, 0), 0.012, rim)); // thin 2-spoke
-    else for (const a of [270, 30, 150]) { const q = a * Math.PI / 180; wheel.add(beam(new THREE.Vector3(0, 0, 0), new THREE.Vector3(R * Math.cos(q), R * Math.sin(q), 0), 0.014, rim)); } // 3-spoke
+    // sub's roll cage is thinner and dark gold; door cards are dark interior trim, only a sliver at the screen edges
+    const pillar = type === 'sub' ? CK_MAT(0x8c6a14, 0.5, 0.3, true) : trim, pr = type === 'sub' ? 0.65 : 1;
+    for (const s of [1, -1]) {
+      group.add(ckLimbMesh(CK_PILLAR, pillar, new THREE.Vector3(cx + s * 0.75, -0.16, -0.9), new THREE.Vector3(cx + s * 0.8, 0.4, -1.15), 0.034 * pr)); // A-pillar, thick at the base
+      group.add(box(0.12, 0.34, 0.6, CK_CONSOLE, s * 1.38, -0.42, -1.1), box(0.14, 0.025, 0.3, CK_CONSOLE, s * 1.35, -0.23, -1.0)); // door card with armrest edge, only a sliver at the screen edge
+    }
+    group.add(ckLimbMesh(CK_UNIT_CYL, pillar, new THREE.Vector3(cx - 0.8, 0.4, -1.15), new THREE.Vector3(cx + 0.8, 0.4, -1.15), 0.028 * pr)); // roof header
+    group.add(box(0.16, 0.12, 0.5, CK_CONSOLE, cx + 0.3 * Math.sign(cx), -0.38, -0.95)); // centre console hint, on the car centre side
+    group.add(ckLimbMesh(CK_UNIT_CYL, CK_BLACK, new THREE.Vector3(cx - 0.45, -0.13, -1.0), new THREE.Vector3(cx + 0.05, -0.13, -1.0), 0.008)); // wiper parked at the foot of the glass
+    if (type === 'bug') {
+      const spd = ckDial(group, 0, -0.25, -0.67, 0.15, Object.assign({ face: '#f7f3e6', ink: '#1d1d22' }, CK_KMH_DIAL));
+      tick = kmh => ckSetDial(spd, kmh / COCK_KMH_MAX);
+    } else {
+      group.add(ball(0.3, dash, 0, -0.28, -0.88, 1, 0.5, 0.5)); // hooded binnacle
+      const face = type === 'sub' ? { face: '#15171b', ink: '#f2f2f2' } : { face: '#e9ecef', ink: '#1d1d22' };
+      const tach = ckDial(group, -0.1, -0.24, -0.67, 0.09, Object.assign({}, face, CK_RPM_DIAL));
+      const spd = ckDial(group, 0.1, -0.24, -0.67, 0.09, Object.assign({}, face, CK_KMH_DIAL));
+      const boost = type === 'sub' ? ckDial(group, 0.2, -0.13, -0.72, 0.05, Object.assign({}, face, CK_BOOST_DIAL)) : null;
+      let rpmF = 0.25, boostF = 0;
+      tick = (kmh, dt) => {
+        const k = 1 - Math.exp(-6 * dt);
+        ckSetDial(spd, kmh / COCK_KMH_MAX);
+        rpmF += (0.25 + 0.75 * ((kmh % 60) / 60) - rpmF) * k; ckSetDial(tach, rpmF);
+        if (boost) { boostF += ((performance.now() < boostUntil ? 0.85 : 0.2 * Math.min(1, kmh / 120)) - boostF) * k; ckSetDial(boost, boostF); }
+      };
+    }
   }
-  const hubM = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.03, 16), hub); hubM.rotation.x = Math.PI / 2; hubM.position.z = 0.01; wheel.add(hubM);
-  const hands = [-1, 1].map(s => { const h = ball(0.04, COCK_GLOVE, s * R, 0, 0.02, 1, 1.15, 1); wheel.add(h); return h; });
-  const gauge = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.02, 20), M(0xf7f7f2)); gauge.rotation.x = Math.PI / 2; gauge.position.set(0, -0.2, -0.66); group.add(gauge);
-  const needle = new THREE.Group(); needle.position.set(0, -0.2, -0.645); needle.add(box(0.012, 0.075, 0.01, COCK_NEEDLE, 0, 0.0375, 0)); group.add(needle);
-  const elbows = [new THREE.Vector3(-0.42, -0.85, 0), new THREE.Vector3(0.42, -0.85, 0)];
-  const arms = elbows.map(e => { const m = beam(e, new THREE.Vector3(e.x, e.y + 0.5, e.z), 0.03, COCK_SUIT); group.add(m); return m; });
-  return { group, wheel, needle, eye: new THREE.Vector3(S.lat, S.y, S.z), hands, arms, elbows };
+  return { group, wheel, eye: new THREE.Vector3(S.lat, S.y, S.z), arms, hands, tick };
 }
 const COCK = {};
 for (const t of CAR_KEYS) { COCK[t] = makeCockpit(t); cockpitScene.add(COCK[t].group); }
@@ -1592,11 +1769,23 @@ let cockWheel = 0;
 function updateCockpit(t, steer, dt) {
   const ck = COCK[t];
   for (const k of CAR_KEYS) COCK[k].group.visible = k === t;
-  cockWheel += (-steer * 1.7 - cockWheel) * (1 - Math.exp(-12 * dt)); // steer right (+1) turns the wheel clockwise for the driver
+  cockWheel += (-steer * 1.25 - cockWheel) * (1 - Math.exp(-12 * dt)); // steer right (+1) turns the wheel clockwise for the driver
   ck.wheel.rotation.z = cockWheel;
-  ck.needle.rotation.z = 2.094 - 4.189 * Math.min(1, Math.abs(me.v) * 3.6 / COCK_KMH_MAX); // lower left at 0, clockwise sweep of 240 deg
+  ck.tick(Math.abs(me.v) * 3.6, dt);
+  for (const h of ck.hands) { // hand holds its car-frame angle; once the wheel turns past the limit the grip slides along the rim
+    const aw = Math.min(h.hi, Math.max(h.lo, h.rest + cockWheel)) - cockWheel;
+    h.group.position.set(h.R * Math.cos(aw), h.R * Math.sin(aw), 0); h.group.rotation.z = aw;
+  }
   ck.group.updateMatrixWorld(true);
-  ck.hands.forEach((h, i) => setBeam(ck.arms[i], ck.elbows[i], h.getWorldPosition(new THREE.Vector3())));
+  for (const a of ck.arms) { // the elbow is carried by the hand (straight wrist); sleeves and bands span shoulder-elbow-wrist
+    a.wrist.getWorldPosition(CK_W);
+    a.elbowAt.getWorldPosition(a.elbow);
+    ckPlace(a.up, a.S, a.elbow, 0.04, 0.04);
+    ckPlace(a.fore, a.elbow, CK_W, 0.032, 0.032);
+    a.joint.position.copy(a.elbow); a.joint.scale.setScalar(0.034);
+    ckBand(a.bu, a.S, a.elbow, 0.5, 0.039);
+    ckBand(a.bf, a.elbow, CK_W, 0.78, 0.0315);
+  }
 }
 
 /* ---------------- loop ---------------- */
