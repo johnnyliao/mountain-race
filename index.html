@@ -39,6 +39,7 @@ button:focus-visible{outline:3px solid var(--papaya);outline-offset:3px}
 #mapwrap{position:absolute;right:calc(14px + env(safe-area-inset-right,0px));top:calc(10px + env(safe-area-inset-top,0px));padding:6px}
 #minimap{display:block;width:120px;height:120px}
 #music{pointer-events:auto;position:absolute;right:calc(150px + env(safe-area-inset-right,0px));top:calc(10px + env(safe-area-inset-top,0px));font-size:15px;padding:6px 12px}
+#viewBtn{pointer-events:auto;position:absolute;right:calc(150px + env(safe-area-inset-right,0px));top:calc(52px + env(safe-area-inset-top,0px));font-size:15px;padding:6px 12px}
 #count{position:absolute;left:50%;top:38%;transform:translate(-50%,-50%);font-family:var(--f-display);font-weight:800;font-size:120px;color:#fff;-webkit-text-stroke:5px var(--navy);text-shadow:0 7px 0 var(--navy);pointer-events:none}
 #count.pop{animation:pop .5s ease-out}
 @keyframes pop{from{transform:translate(-50%,-50%) scale(1.8);opacity:0}to{transform:translate(-50%,-50%) scale(1);opacity:1}}
@@ -109,7 +110,7 @@ h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:clamp(28px,6v
   .panel{gap:7px} h1{font-size:28px}
   #speed b{font-size:36px} #gas{width:118px;height:118px;font-size:24px}
   #brake{right:calc(156px + env(safe-area-inset-right,0px))} #hornBtn{right:calc(150px + env(safe-area-inset-right,0px));bottom:calc(104px + env(safe-area-inset-bottom,0px))}
-  #minimap{width:96px;height:96px} #music{right:calc(124px + env(safe-area-inset-right,0px))}
+  #minimap{width:96px;height:96px} #music{right:calc(124px + env(safe-area-inset-right,0px))} #viewBtn{right:calc(124px + env(safe-area-inset-right,0px))}
   #driftBtn{right:calc(50px + env(safe-area-inset-right,0px));bottom:calc(152px + env(safe-area-inset-bottom,0px))}
   .car svg{max-height:18vh} #count{font-size:96px}
 }
@@ -126,6 +127,7 @@ h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:clamp(28px,6v
   <div id="info"><div id="lap" class="sticker">第 1/2 圈</div><div id="rank" class="sticker" hidden>第 1 名</div></div>
   <div id="mapwrap" class="sticker"><canvas id="minimap" width="240" height="240"></canvas></div>
   <button id="music" class="sticker" type="button">音樂 開</button>
+  <button id="viewBtn" class="sticker" type="button">視角 追尾</button>
   <div id="toast" class="sticker" hidden></div>
   <div id="mirror" hidden></div>
   <div id="count" hidden></div>
@@ -994,6 +996,7 @@ const input = { steer: 0, gas: false, brake: false, drift: false };
 const keys = {};
 addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; if (e.key.toLowerCase() === 'h') honk(); });
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+addEventListener('keydown', e => { if (e.key.toLowerCase() === 'v' && !e.repeat && e.target.tagName !== 'INPUT') toggleView(); });
 function holdPad(el, on, off) {
   el.addEventListener('pointerdown', e => { e.preventDefault(); initAudio(); try { el.setPointerCapture(e.pointerId); } catch (_) {} el.classList.add('on'); on(); });
   const up = () => { el.classList.remove('on'); off && off(); };
@@ -1247,6 +1250,16 @@ $('againBtn').addEventListener('click', () => {
   parkAll(); sendPresence(true); updateLobby();
 });
 $('music').addEventListener('click', () => { initAudio(); A.musicOn = !A.musicOn; $('music').textContent = A.musicOn ? '音樂 開' : '音樂 關'; });
+// race camera: 'chase' (behind the car) or 'cockpit' (driver's seat); remembered in localStorage
+let VIEW = (() => { try { return localStorage.getItem('mtn-race-view') === 'cockpit' ? 'cockpit' : 'chase'; } catch (_) { return 'chase'; } })();
+$('viewBtn').textContent = VIEW === 'cockpit' ? '視角 車內' : '視角 追尾';
+function toggleView() {
+  VIEW = VIEW === 'cockpit' ? 'chase' : 'cockpit';
+  try { localStorage.setItem('mtn-race-view', VIEW); } catch (_) {}
+  $('viewBtn').textContent = VIEW === 'cockpit' ? '視角 車內' : '視角 追尾';
+  if (VIEW === 'chase') camInit = true; // snap the chase cam back instead of swinging
+}
+$('viewBtn').addEventListener('click', e => { toggleView(); e.currentTarget.blur(); });
 for (const id of [1, 2, 3]) {
   const b = $('trk-' + id); b.classList.toggle('sel', id === TRACK_ID);
   b.addEventListener('click', () => { if (id !== TRACK_ID) location.href = '?track=' + id + '&mode=' + G.mode + (DBG ? '&debug=1' : ''); });
@@ -1516,6 +1529,76 @@ function updateDriftFx(dt, car) {
   stepParticles(DSMOKE, dt); stepParticles(DSPARK, dt);
 }
 
+/* ---------------- cockpit view: driver's seat, drawn over the 3D scene with its own camera and lights ---------------- */
+const cockpitScene = new THREE.Scene();
+cockpitScene.add(new THREE.HemisphereLight(0xcfe9ff, 0x5d8a3c, 0.9));
+const cockpitSun = new THREE.DirectionalLight(0xfff0d0, 0.6); cockpitSun.position.set(0.4, 1, 0.6); cockpitScene.add(cockpitSun);
+const cockpitCam = new THREE.PerspectiveCamera(62, 1, 0.01, 20); // stays at the origin with identity rotation; parts are built in this space
+const CK_Q = new THREE.Quaternion(), CK_TURN = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI), CK_PITCH = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.05);
+// lat: eye offset in car space (+X = car left), also the dash centre in cockpit space; y/z: eye height and forward offset in car space
+const COCK_STYLE = {
+  f1: { body: 0xffd21a, dash: 0x0b2a5b, trim: 0x0b2a5b, rim: 0x202024, hub: 0xffd21a, lat: 0, y: 1.5, z: 0 },
+  bug: { body: 0x1ea5ec, dash: 0xefe6cf, trim: 0x1ea5ec, rim: 0x1d1d22, hub: 0xf2ead8, lat: 0.35, y: 2.74, z: -0.1 },
+  sub: { body: 0x1f4fa8, dash: 0x1d1f24, trim: 0xd4a017, rim: 0x1d1d22, hub: 0xd4a017, lat: -0.35, y: 2.3, z: -0.1 },
+  gt500: { body: 0x8f969c, dash: 0x222428, trim: 0x8f969c, rim: 0x1d1d22, hub: 0xcfd3d7, lat: 0.35, y: 2.04, z: -0.1 }
+};
+const COCK_GLOVE = M(0xd62828), COCK_SUIT = M(0x0b2a5b), COCK_NEEDLE = M(0xff3b3b), COCK_BLACK = M(0x1d1d22);
+const COCK_KMH_MAX = 240; // gauge full scale
+// cylinder from a to b (both in cockpit space); used for arms, pillars and spokes
+function beam(a, b, r, mat) { const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 1, 8), mat); setBeam(m, a, b); return m; }
+function setBeam(m, a, b) {
+  const d = new THREE.Vector3().subVectors(b, a), len = d.length();
+  m.position.addVectors(a, b).multiplyScalar(0.5);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.divideScalar(len));
+  m.scale.set(1, len, 1);
+}
+function makeCockpit(type) {
+  const S = COCK_STYLE[type], cx = S.lat, group = new THREE.Group();
+  const body = M(S.body), dash = M(S.dash), trim = M(S.trim), rim = M(S.rim), hub = M(S.hub);
+  const tilt = new THREE.Group(); tilt.position.set(0, -0.25, -0.5); tilt.rotation.x = -0.5; // wheel face tipped up toward the eyes
+  const wheel = new THREE.Group(); tilt.add(wheel); group.add(tilt);
+  const R = type === 'f1' ? 0.17 : 0.18;
+  if (type === 'f1') {
+    group.add(box(0.6, 0.22, 0.6, dash, 0, -0.27, -0.95), box(0.5, 0.24, 2.0, body, 0, -0.36, -2.25)); // cowl and nose
+    const halo = new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.035, 6, 16, Math.PI), rim); halo.position.set(0, -0.1, -0.85); group.add(halo);
+    for (const s of [1, -1]) { const t = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.22, 14), rim); t.rotation.z = Math.PI / 2; t.position.set(s * 0.95, -0.42, -1.8); group.add(t); }
+    // rectangular F1 wheel: bars, dark grips at 3 and 9 o'clock, small display
+    wheel.add(box(0.36, 0.03, 0.03, rim, 0, 0.11, 0), box(0.36, 0.03, 0.03, rim, 0, -0.11, 0));
+    for (const s of [1, -1]) wheel.add(box(0.05, 0.25, 0.05, rim, s * R, 0, 0));
+    wheel.add(box(0.14, 0.06, 0.01, M(0x3bd16f), 0, 0.03, 0.01));
+  } else {
+    if (type === 'bug') group.add(ball(0.78, dash, cx, -0.31, -1.0, 1, 0.25, 0.5)); // round Beetle-style dash
+    else group.add(box(1.5, 0.2, 0.6, dash, cx, -0.23, -0.95));
+    group.add(box(1.4, 0.06, 1.0, body, cx, -0.36, -1.1)); // bonnet, low so the road shows above it
+    if (type === 'gt500') for (const s of [1, -1]) group.add(box(0.16, 0.01, 1.0, COCK_BLACK, cx + s * 0.12, -0.326, -1.1));
+    if (type === 'sub') group.add(box(0.1, 0.01, 1.0, trim, cx, -0.326, -1.1));
+    for (const s of [1, -1]) group.add(beam(new THREE.Vector3(cx + s * 0.75, -0.16, -0.9), new THREE.Vector3(cx + s * 0.8, 0.4, -1.15), 0.022, trim)); // A-pillars
+    group.add(beam(new THREE.Vector3(cx - 0.8, 0.4, -1.15), new THREE.Vector3(cx + 0.8, 0.4, -1.15), 0.028, trim)); // roof header
+    wheel.add(new THREE.Mesh(new THREE.TorusGeometry(R, 0.02, 8, 28), rim));
+    if (type === 'bug') wheel.add(beam(new THREE.Vector3(-R, 0, 0), new THREE.Vector3(R, 0, 0), 0.012, rim)); // thin 2-spoke
+    else for (const a of [270, 30, 150]) { const q = a * Math.PI / 180; wheel.add(beam(new THREE.Vector3(0, 0, 0), new THREE.Vector3(R * Math.cos(q), R * Math.sin(q), 0), 0.014, rim)); } // 3-spoke
+  }
+  const hubM = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.03, 16), hub); hubM.rotation.x = Math.PI / 2; hubM.position.z = 0.01; wheel.add(hubM);
+  const hands = [-1, 1].map(s => { const h = ball(0.04, COCK_GLOVE, s * R, 0, 0.02, 1, 1.15, 1); wheel.add(h); return h; });
+  const gauge = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.02, 20), M(0xf7f7f2)); gauge.rotation.x = Math.PI / 2; gauge.position.set(0, -0.2, -0.66); group.add(gauge);
+  const needle = new THREE.Group(); needle.position.set(0, -0.2, -0.645); needle.add(box(0.012, 0.075, 0.01, COCK_NEEDLE, 0, 0.0375, 0)); group.add(needle);
+  const elbows = [new THREE.Vector3(-0.42, -0.85, 0), new THREE.Vector3(0.42, -0.85, 0)];
+  const arms = elbows.map(e => { const m = beam(e, new THREE.Vector3(e.x, e.y + 0.5, e.z), 0.03, COCK_SUIT); group.add(m); return m; });
+  return { group, wheel, needle, eye: new THREE.Vector3(S.lat, S.y, S.z), hands, arms, elbows };
+}
+const COCK = {};
+for (const t of CAR_KEYS) { COCK[t] = makeCockpit(t); cockpitScene.add(COCK[t].group); }
+let cockWheel = 0;
+function updateCockpit(t, steer, dt) {
+  const ck = COCK[t];
+  for (const k of CAR_KEYS) COCK[k].group.visible = k === t;
+  cockWheel += (-steer * 1.7 - cockWheel) * (1 - Math.exp(-12 * dt)); // steer right (+1) turns the wheel clockwise for the driver
+  ck.wheel.rotation.z = cockWheel;
+  ck.needle.rotation.z = 2.094 - 4.189 * Math.min(1, Math.abs(me.v) * 3.6 / COCK_KMH_MAX); // lower left at 0, clockwise sweep of 240 deg
+  ck.group.updateMatrixWorld(true);
+  ck.hands.forEach((h, i) => setBeam(ck.arms[i], ck.elbows[i], h.getWorldPosition(new THREE.Vector3())));
+}
+
 /* ---------------- loop ---------------- */
 let last = performance.now(), camInit = true, orbit = 0;
 const camPos = new THREE.Vector3(), camLook = new THREE.Vector3(), tmp = new THREE.Vector3();
@@ -1712,6 +1795,7 @@ function frame(now) {
   const mine = CARS[G.pick], other = opp.seen && !G.solo ? CARS[opp.car] : null;
   const hopY = DRIFT.hop < DRIFT_HOP ? 0.3 * Math.sin(Math.PI * DRIFT.hop / DRIFT_HOP) : 0;
   poseCar(mine, me.x, me.y + hopY, me.z, me.h - DRIFT.vis, me.pitch, -ctl.steer * 0.45, me.v * dt);
+  mine.root.visible = VIEW !== 'cockpit';
   updateDriftFx(dt, mine);
   // only my car and the opponent's car are shown; every other car root is hidden
   for (const t of CAR_KEYS) {
@@ -1722,14 +1806,22 @@ function frame(now) {
   }
 
   // camera
-  const fx = Math.sin(me.h), fz = Math.cos(me.h), back = 9.5;
-  // smooth the camera offset relative to the car (not world position), so the distance never grows with speed
-  tmp.set(-fx * back, 4.6, -fz * back);
-  if (camInit) { camPos.copy(tmp); camLook.set(0, 2.2, 0); camInit = false; }
-  camPos.lerp(tmp, 1 - Math.exp(-5 * dt));
-  camLook.lerp(new THREE.Vector3(fx * 9, 2.4, fz * 9), 1 - Math.exp(-8 * dt));
-  camera.position.set(me.x + camPos.x, Math.max(me.y + camPos.y, me.y + 2.5), me.z + camPos.z).add(FX.shake);
-  camera.lookAt(me.x + camLook.x, me.y + camLook.y, me.z + camLook.z);
+  if (VIEW === 'cockpit') {
+    // driver's seat: the car's eye point, looking down the car's nose (camera -Z is car +Z), tilted slightly down
+    updateCockpit(G.pick, ctl.steer, dt);
+    mine.root.updateMatrixWorld(true);
+    camera.position.copy(COCK[G.pick].eye).applyMatrix4(mine.root.matrixWorld).add(FX.shake);
+    camera.quaternion.copy(mine.root.getWorldQuaternion(CK_Q)).multiply(CK_TURN).multiply(CK_PITCH);
+  } else {
+    const fx = Math.sin(me.h), fz = Math.cos(me.h), back = 9.5;
+    // smooth the camera offset relative to the car (not world position), so the distance never grows with speed
+    tmp.set(-fx * back, 4.6, -fz * back);
+    if (camInit) { camPos.copy(tmp); camLook.set(0, 2.2, 0); camInit = false; }
+    camPos.lerp(tmp, 1 - Math.exp(-5 * dt));
+    camLook.lerp(new THREE.Vector3(fx * 9, 2.4, fz * 9), 1 - Math.exp(-8 * dt));
+    camera.position.set(me.x + camPos.x, Math.max(me.y + camPos.y, me.y + 2.5), me.z + camPos.z).add(FX.shake);
+    camera.lookAt(me.x + camLook.x, me.y + camLook.y, me.z + camLook.z);
+  }
   const fov = 62; if (Math.abs(camera.fov - fov) > 0.05) { camera.fov = fov; camera.updateProjectionMatrix(); }
 
   // HUD
@@ -1751,6 +1843,10 @@ function frame(now) {
   setMirror($('result').hidden);
   if (mirrorShown) renderMirror();
   renderer.render(scene, camera);
+  if (VIEW === 'cockpit') { // dashboard and hands drawn over the 3D view
+    if (cockpitCam.fov !== camera.fov || cockpitCam.aspect !== camera.aspect) { cockpitCam.fov = camera.fov; cockpitCam.aspect = camera.aspect; cockpitCam.updateProjectionMatrix(); }
+    renderer.autoClear = false; renderer.clearDepth(); renderer.render(cockpitScene, cockpitCam); renderer.autoClear = true;
+  }
   if (mirrorShown) drawMirror();
 }
 
